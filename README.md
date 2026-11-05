@@ -1,9 +1,10 @@
 <div align="center">
 
-<img src="docs/banner.svg" alt="Enca's SGEN: generador de CSR y claves privadas que no se queda con nada" width="100%">
+<a href="https://sslgen.exala.es"><img src="docs/banner.svg" alt="Enca's SGEN: generador de CSR y claves privadas que no se queda con nada · sslgen.exala.es" width="100%"></a>
 
 <br>
 
+[![Web oficial](https://img.shields.io/website?url=https%3A%2F%2Fsslgen.exala.es&label=sslgen.exala.es&up_message=online&down_message=offline&logo=googlechrome&logoColor=white)](https://sslgen.exala.es)
 [![Tests (Debian 13)](https://github.com/0xenca/openssl-web/actions/workflows/tests.yml/badge.svg)](https://github.com/0xenca/openssl-web/actions/workflows/tests.yml)
 ![Versión](https://img.shields.io/badge/versión-1.3.0-2463eb)
 ![Debian 13](https://img.shields.io/badge/Debian-13_trixie-A81D33?logo=debian&logoColor=white)
@@ -22,6 +23,15 @@
 <br>
 Ni un fichero. Ni un log. Ni una clave. Ni una cookie.
 
+<br>
+
+[![Abrir Enca's SGEN en sslgen.exala.es](https://img.shields.io/badge/Abrir_la_web-sslgen.exala.es-2463eb?style=for-the-badge&logo=letsencrypt&logoColor=white)](https://sslgen.exala.es)
+
+<sub>Gratis · sin registro · sin cookies · sin instalar nada</sub>
+
+<br><br>
+
+[Web oficial](https://sslgen.exala.es) ·
 [Características](#-características) ·
 [Seguridad](#%EF%B8%8F-seguridad-en-profundidad) ·
 [Cómo funciona](#-el-cifrado-por-dentro) ·
@@ -37,6 +47,43 @@ Ni un fichero. Ni un log. Ni una clave. Ni una cookie.
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/generar-dark.png">
   <img alt="Formulario de generación de CSR de Enca's SGEN" src="docs/screenshots/generar-light.png">
 </picture>
+
+<p align="center"><sub>👆 Así se ve <a href="https://sslgen.exala.es"><b>sslgen.exala.es</b></a>. La captura cambia con el tema claro u oscuro de tu GitHub, igual que la web.</sub></p>
+
+---
+
+## 🌍 Úsala o instálala
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### ☁️ Úsala ya
+**[sslgen.exala.es](https://sslgen.exala.es)** es la instancia oficial, mantenida por el autor:
+
+- ✅ Lista para usar, sin registro ni cookies
+- ✅ HTTPS más cifrado efímero `sgen1` en cada petición
+- ✅ Actualizada según los avisos de Dependabot y los parches de Debian
+- ✅ Mismo código que este repositorio
+
+**[→ Abrir sslgen.exala.es](https://sslgen.exala.es)**
+
+</td>
+<td width="50%" valign="top">
+
+### 🏠 Instálala en tu servidor
+¿Prefieres que nada salga de tu red? Despliega tu propia instancia en Debian 13 en un minuto:
+
+- ✅ Instalador con tests, *rollback* y servicio systemd endurecido
+- ✅ Todas las interfaces, IPv4 e IPv6
+- ✅ HTTPS autofirmado en un solo paso
+- ✅ Actualizaciones con un comando
+
+**[→ Instalación en 3 comandos](#-instalación-en-3-comandos)**
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -358,6 +405,8 @@ docs/                      Banner y capturas
 ---
 
 <div align="center">
+
+### [🔐 sslgen.exala.es](https://sslgen.exala.es)
 
 **Enca's SGEN** · Desarrollado por **Andre Lopez Araujo**
 

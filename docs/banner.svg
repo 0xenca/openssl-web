@@ -17,6 +17,11 @@
   <rect width="1200" height="300" rx="22" fill="url(#grid)"/>
   <circle cx="1060" cy="40" r="180" fill="#5b8cff" fill-opacity="0.10"/>
   <circle cx="1130" cy="270" r="120" fill="#4cc38a" fill-opacity="0.08"/>
+  <g font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif" font-size="20" font-weight="600">
+    <rect x="938" y="26" width="236" height="40" rx="20" fill="#ffffff" fill-opacity="0.12" stroke="#9ec0ff" stroke-opacity="0.45"/>
+    <circle cx="962" cy="46" r="5" fill="#4cc38a"/>
+    <text x="1072" y="53" text-anchor="middle" fill="#ffffff">sslgen.exala.es</text>
+  </g>
   <g transform="translate(84 62) scale(7.4)">
     <path fill="url(#shield)" d="M12 2 4 5v6c0 5 3.4 9.6 8 11 4.6-1.4 8-6 8-11V5l-8-3Zm0 6a2.5 2.5 0 0 1 1 4.8V16h-2v-3.2A2.5 2.5 0 0 1 12 8Z"/>
   </g>
