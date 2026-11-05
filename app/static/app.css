@@ -1,4 +1,4 @@
-/* OpenSSL Web — estilos propios, sin dependencias externas. */
+/* Enca's SGEN — estilos propios, sin dependencias externas. */
 :root {
   --bg: #f6f7f9;
   --surface: #ffffff;
@@ -93,6 +93,7 @@ code { font-family: var(--mono); font-size: .9em; }
 }
 .tab:hover { color: var(--text); background: var(--surface-2); }
 .tab[aria-selected="true"] { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.lbl-short { display: none; }
 .badge {
   display: inline-block; min-width: 1.5em; padding: 0 6px; margin-left: 2px;
   border-radius: 999px; background: var(--surface-2); color: var(--muted);
@@ -251,6 +252,29 @@ table.kv details[open] summary { margin-bottom: 6px; }
 pre.raw { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0 0; }
 .match { margin-top: 12px; }
 
+/* ---------- información ---------- */
+.info p, .info li { max-width: 80ch; }
+.info p { margin: 0 0 10px; }
+.info h3 { margin: 18px 0 8px; font-size: 15px; }
+.info h2 + h3 { margin-top: 0; }
+.info ul, .info ol { margin: 0 0 6px; padding-left: 22px; }
+.info li { margin-bottom: 8px; }
+.info li::marker { color: var(--accent); }
+.info .card { scroll-margin-top: 80px; }
+.intro { border-left: 4px solid var(--accent); }
+.toc { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 16px; margin-top: 12px; font-size: 14px; }
+.toc a, .foot a { color: var(--accent); text-decoration: none; }
+.toc a:hover, .foot a:hover { text-decoration: underline; }
+.steps li { padding-left: 4px; }
+.guarantees { list-style: none; padding-left: 0 !important; }
+.guarantees li { position: relative; padding: 10px 12px 10px 36px; background: var(--ok-soft); border-radius: 8px; max-width: none; }
+.guarantees li::before { content: "✓"; position: absolute; left: 13px; top: 10px; color: var(--ok); font-weight: 700; }
+.table-wrap { overflow-x: auto; }
+table.data-table { min-width: 620px; }
+table.data-table th { width: auto; }
+table.data-table thead th { color: var(--text); font-weight: 600; background: var(--surface-2); }
+.legal { border-color: var(--warn); background: linear-gradient(var(--warn-soft), var(--warn-soft)) top / 100% 4px no-repeat, var(--surface); }
+
 /* ---------- pie y toast ---------- */
 .foot {
   display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
@@ -272,4 +296,15 @@ pre.raw { font-family: var(--mono); font-size: 12px; background: var(--surface-2
   .card { padding: 16px 14px; }
   .san-row { grid-template-columns: 90px 1fr 32px; }
   table.kv th { width: 40%; }
+  .tab { padding: 6px 8px; font-size: 14px; }
+  .lbl-long { display: none; }
+  .lbl-short { display: inline; }
+  .tabs { gap: 2px; }
+  table.data-table { min-width: 0; }
+  table.data-table thead { display: none; }
+  table.data-table tr { display: block; padding: 8px 0; border-bottom: 1px solid var(--border); }
+  table.data-table tr:last-child { border-bottom: 0; }
+  table.data-table td { display: grid; grid-template-columns: 42% 1fr; gap: 8px; border: 0; padding: 3px 4px; }
+  table.data-table td::before { content: attr(data-label); color: var(--muted); font-size: 13px; }
+  table.data-table td:first-child { font-weight: 600; }
 }

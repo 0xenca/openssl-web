@@ -49,7 +49,7 @@ class ServerTests(unittest.TestCase):
     def test_index_and_security_headers(self):
         res, body = self.request("GET", "/")
         self.assertEqual(res.status, 200)
-        self.assertIn(b"OpenSSL Web", body)
+        self.assertIn("Enca's SGEN".encode(), body)
         self.assertNotIn(b"{{VERSION}}", body)
         csp = res.getheader("Content-Security-Policy")
         self.assertIn("default-src 'none'", csp)
@@ -139,6 +139,20 @@ class ServerTests(unittest.TestCase):
 
 class StaticAssetsTests(unittest.TestCase):
     """La interfaz no debe depender de CSS/JS/fuentes externos."""
+
+    def test_title_and_information_section(self):
+        with open(os.path.join(APP, "static", "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+        self.assertRegex(html, r"<title>Enca's SGEN")
+        info = html[html.index('id="tab-info"'):]
+        for text in ("Andre Lopez Araujo", "Dependabot", "SLA", "gratuito",
+                     "Garantías técnicas de no almacenamiento", "ataques"):
+            with self.subTest(text=text):
+                self.assertIn(text, info)
+        # Los enlaces internos del índice apuntan a secciones existentes
+        for anchor in re.findall(r'href="#(info-[a-z]+)"', html):
+            with self.subTest(anchor=anchor):
+                self.assertIn(f'id="{anchor}"', html)
 
     def test_no_external_dependencies(self):
         static = os.path.join(APP, "static")

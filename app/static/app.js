@@ -1,4 +1,4 @@
-/* OpenSSL Web — lógica del navegador. Sin dependencias externas.
+/* Enca's SGEN — lógica del navegador. Sin dependencias externas.
  *
  * Las claves y CSR generados se guardan ÚNICAMENTE en el localStorage de
  * este navegador. El servidor no conserva nada.
@@ -615,8 +615,20 @@
     });
 
     updateSavedCount();
+    $all("[data-goto]").forEach(function (a) {
+      a.addEventListener("click", function (ev) {
+        ev.preventDefault();
+        showTab(a.dataset.goto);
+        window.scrollTo(0, 0);
+      });
+    });
     var hash = (location.hash || "").slice(1);
-    if (hash === "decode" || hash === "saved") showTab(hash);
+    if (hash === "decode" || hash === "saved" || hash === "info") showTab(hash);
+    else if (hash.indexOf("info-") === 0 && document.getElementById(hash)) {
+      showTab("info");
+      history.replaceState(null, "", "#" + hash);
+      document.getElementById(hash).scrollIntoView();
+    }
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

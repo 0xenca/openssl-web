@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  OpenSSL Web — instalador / actualizador para Debian 13 (trixie)
+#  Enca's SGEN (opensslweb) — instalador / actualizador para Debian 13 (trixie)
 #
 #  Uso (como root):
 #    ./install.sh [install]     Instalación inicial o redespliegue desde este directorio
@@ -99,7 +99,7 @@ ensure_user() {
   fi
   if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
     useradd --system --gid "$SERVICE_USER" --no-create-home --home-dir /nonexistent \
-      --shell /usr/sbin/nologin --comment "OpenSSL Web" "$SERVICE_USER"
+      --shell /usr/sbin/nologin --comment "Enca's SGEN" "$SERVICE_USER"
     ok "Usuario de sistema '$SERVICE_USER' creado"
   fi
 }
@@ -240,7 +240,7 @@ do_install() {
   swap_in
   install_unit
   if restart_and_check; then
-    ok "${C_B}OpenSSL Web $(cat "$INSTALL_DIR/VERSION") desplegado en $INSTALL_DIR${C_0}"
+    ok "${C_B}Enca's SGEN $(cat "$INSTALL_DIR/VERSION") desplegado en $INSTALL_DIR${C_0}"
     print_access
   else
     warn "El servicio no responde tras el despliegue"
@@ -323,7 +323,7 @@ do_status() {
   if [[ -f $INSTALL_DIR/VERSION ]]; then
     echo "Versión instalada: $(cat "$INSTALL_DIR/VERSION")"
   else
-    echo "OpenSSL Web no está instalado"
+    echo "Enca's SGEN no está instalado"
   fi
   [[ -f $PREV_DIR/VERSION ]] && echo "Versión anterior:  $(cat "$PREV_DIR/VERSION")"
   [[ -f $SOURCE_FILE ]] && echo "Repositorio:       $(cat "$SOURCE_FILE")"
@@ -333,7 +333,7 @@ do_status() {
 
 do_test() {
   require_root
-  [[ -d $INSTALL_DIR ]] || die "OpenSSL Web no está instalado"
+  [[ -d $INSTALL_DIR ]] || die "Enca's SGEN no está instalado"
   ensure_user
   run_tests "$INSTALL_DIR" || die "Los tests han fallado"
 }
@@ -348,9 +348,9 @@ do_uninstall() {
     rm -rf "$CONF_DIR"
     userdel "$SERVICE_USER" >/dev/null 2>&1 || true
     getent group "$SERVICE_USER" >/dev/null && groupdel "$SERVICE_USER" >/dev/null 2>&1 || true
-    ok "OpenSSL Web desinstalado (configuración y usuario eliminados)"
+    ok "Enca's SGEN desinstalado (configuración y usuario eliminados)"
   else
-    ok "OpenSSL Web desinstalado (se conserva $CONF_DIR; usa --purge para borrarlo)"
+    ok "Enca's SGEN desinstalado (se conserva $CONF_DIR; usa --purge para borrarlo)"
   fi
 }
 

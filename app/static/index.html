@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="referrer" content="no-referrer">
-<title>OpenSSL Web · Generador de CSR</title>
+<title>Enca's SGEN · Generador de CSR y claves</title>
+<meta name="description" content="Enca's SGEN: generador de peticiones de certificado (CSR) y claves privadas. Sin almacenamiento en el servidor.">
+<meta name="author" content="Andre Lopez Araujo">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="app.css">
 <script src="app.js" defer></script>
@@ -14,12 +16,13 @@
 <header class="topbar">
   <div class="brand">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.6 8 11 4.6-1.4 8-6 8-11V5l-8-3Zm0 6a2.5 2.5 0 0 1 1 4.8V16h-2v-3.2A2.5 2.5 0 0 1 12 8Z"/></svg>
-    <span>OpenSSL Web</span>
+    <span>Enca's SGEN</span>
   </div>
   <nav class="tabs" role="tablist">
     <button role="tab" class="tab" data-tab="generate" aria-selected="true">Generar</button>
     <button role="tab" class="tab" data-tab="decode" aria-selected="false">Decodificar</button>
     <button role="tab" class="tab" data-tab="saved" aria-selected="false">Guardados <span class="badge" id="saved-count">0</span></button>
+    <button role="tab" class="tab" data-tab="info" aria-selected="false"><span class="lbl-long">Información</span><span class="lbl-short">Info</span></button>
   </nav>
   <button class="icon-btn" id="theme-toggle" type="button" title="Cambiar tema" aria-label="Cambiar tema">
     <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1"/></svg>
@@ -198,11 +201,230 @@
       <p class="empty" id="saved-empty">No hay peticiones guardadas.</p>
     </div>
   </section>
+
+  <!-- ============================ INFORMACIÓN ============================ -->
+  <section id="tab-info" class="panel info" role="tabpanel" hidden>
+    <div class="card intro">
+      <h2>Enca's SGEN: cómo funciona y qué garantías ofrece</h2>
+      <p>
+        <strong>Enca's SGEN</strong> es una herramienta web para generar <strong>peticiones de firma de certificado (CSR)</strong>
+        y sus <strong>claves privadas</strong>, y para desglosar y validar CSR existentes. Está pensada para que la
+        clave privada y el CSR <strong>vivan únicamente en tu navegador</strong>. El servidor solo interviene
+        durante los instantes imprescindibles para ejecutar OpenSSL y no conserva nada.
+      </p>
+      <nav class="toc" aria-label="Índice">
+        <a href="#info-flujo">1. Funcionamiento paso a paso</a>
+        <a href="#info-datos">2. Qué datos se tratan en cada operación</a>
+        <a href="#info-garantias">3. Garantías de no almacenamiento</a>
+        <a href="#info-limites">4. Lo que esta web no puede garantizar</a>
+        <a href="#info-navegador">5. Tus datos en el navegador</a>
+        <a href="#info-recomendaciones">6. Recomendaciones de uso</a>
+        <a href="#info-actualizaciones">7. Actualizaciones y vulnerabilidades</a>
+        <a href="#info-autoria">8. Autoría</a>
+        <a href="#info-legal">9. Aviso legal y exención de responsabilidad</a>
+      </nav>
+    </div>
+
+    <div class="card" id="info-flujo">
+      <h2>1. Funcionamiento paso a paso</h2>
+
+      <h3>1.1 Generación del CSR y la clave privada</h3>
+      <ol class="steps">
+        <li><strong>Rellenas el formulario en tu navegador:</strong> tipo de clave (RSA 2048/3072/4096 o ECDSA P-256/P-384/P-521),
+          algoritmo de firma (SHA-256/384/512), cifrado AES opcional de la clave (AES-128/192/256-CBC con contraseña),
+          formato de la clave (PKCS#8 o tradicional), datos del sujeto (CN, O, OU, L, ST, C, correo),
+          Subject Alternative Names y extensiones (Key Usage, Extended Key Usage y OCSP Must-Staple).</li>
+        <li><strong>El navegador envía esas opciones al servidor</strong> en una única petición <code>POST /api/generate</code>.
+          Solo viajan los datos del formulario y, si eliges cifrado AES, la contraseña. No se envían cookies ni identificadores.</li>
+        <li><strong>El servidor valida cada campo con listas blancas</strong> (algoritmos permitidos, formato de nombres DNS,
+          IP, correo y URI, longitudes máximas, ausencia de caracteres de control). Todo lo que no cumpla se rechaza
+          antes de llegar a OpenSSL. Los datos nunca se usan para construir ficheros de configuración, así que
+          no es posible inyectar opciones en OpenSSL.</li>
+        <li><strong>OpenSSL genera la clave privada en memoria</strong> (<code>openssl genpkey</code>) y la escribe por su salida estándar.
+          La aplicación la recoge desde un <em>pipe</em> en memoria. No se crea ningún fichero.</li>
+        <li><strong>OpenSSL firma el CSR</strong> (<code>openssl req -new</code>) leyendo la clave por su entrada estándar
+          (<code>/dev/stdin</code>). El sujeto y las extensiones se pasan como argumentos ya validados.</li>
+        <li><strong>Si elegiste cifrado AES</strong>, la clave se cifra con <code>openssl pkey</code>. La contraseña se entrega a
+          OpenSSL por un <em>descriptor de fichero anónimo</em> (<code>-passout fd:N</code>, un pipe en memoria), de modo que
+          nunca aparece en la línea de comandos, en la lista de procesos ni en el disco.</li>
+        <li><strong>El servidor devuelve la clave y el CSR</strong> en la respuesta HTTP, marcada con
+          <code>Cache-Control: no-store</code>, y descarta todas las referencias en memoria al terminar la petición.</li>
+        <li><strong>Tu navegador guarda el resultado</strong> en su almacenamiento local (<code>localStorage</code>) y te lo muestra.
+          La contraseña se borra del formulario en cuanto deja de ser necesaria y no se guarda en ningún sitio.</li>
+      </ol>
+
+      <h3>1.2 Descarga individual de la KEY o del CSR</h3>
+      <p>
+        Se resuelve <strong>al 100&nbsp;% en tu navegador</strong>, sin ninguna comunicación con el servidor. El navegador crea el
+        fichero a partir del texto que ya tiene (<code>Blob</code>) y lo descarga como <code>.key</code>/<code>.csr</code>
+        o como <code>.txt</code> (<code>nombre-key.txt</code>, <code>nombre-csr.txt</code>) para las plataformas que solo
+        admiten ficheros de texto.
+      </p>
+
+      <h3>1.3 Descarga conjunta en .zip</h3>
+      <ol class="steps">
+        <li>Al pulsar «Descargar ambos (.zip)», tu navegador envía la clave y el CSR al servidor (<code>POST /api/zip</code>).</li>
+        <li>El servidor comprueba que ambos tienen formato PEM válido y construye el ZIP <strong>en memoria RAM</strong>
+          (un búfer <code>BytesIO</code>). No se escribe ningún fichero, ni temporal ni definitivo.</li>
+        <li>El ZIP se devuelve en la misma respuesta, con <code>Cache-Control: no-store</code>, y el búfer se libera
+          inmediatamente. El servidor no conserva copia.</li>
+      </ol>
+
+      <h3>1.4 Desglose y validación de un CSR</h3>
+      <p>
+        El CSR pegado se envía a <code>/api/decode</code>. El servidor lo interpreta en memoria con un analizador ASN.1
+        propio y verifica su firma con OpenSSL. Te devuelve el sujeto, la clave pública, el algoritmo de firma, los SAN,
+        las extensiones, una lista de comprobaciones de buenas prácticas y la salida completa de OpenSSL. Un CSR es,
+        por definición, información pública (es lo que se entrega a la autoridad de certificación). Aun así, el servidor
+        tampoco lo almacena. Si por error pegas una clave privada en ese cuadro, <strong>el navegador se niega a enviarla</strong>.
+        Si el CSR coincide con uno de tus guardados, la web te lo indica comparándolo localmente, sin enviar tus guardados a ningún sitio.
+      </p>
+    </div>
+
+    <div class="card" id="info-datos">
+      <h2>2. Qué datos se tratan en cada operación</h2>
+      <div class="table-wrap">
+        <table class="kv data-table">
+          <thead>
+            <tr><th>Operación</th><th>Qué envía tu navegador</th><th>Qué hace el servidor</th><th>Qué queda en el servidor</th></tr>
+          </thead>
+          <tbody>
+            <tr><td data-label="Operación">Generar</td><td data-label="Qué envía tu navegador">Opciones del formulario y contraseña AES (si la eliges)</td><td data-label="Qué hace el servidor">Ejecuta OpenSSL por pipes en memoria y devuelve clave + CSR</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+            <tr><td data-label="Operación">Descargar KEY / CSR</td><td data-label="Qué envía tu navegador">Nada (no hay petición)</td><td data-label="Qué hace el servidor">No interviene</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+            <tr><td data-label="Operación">Descargar .zip</td><td data-label="Qué envía tu navegador">Clave y CSR</td><td data-label="Qué hace el servidor">Comprime en RAM y devuelve el ZIP</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+            <tr><td data-label="Operación">Desglosar CSR</td><td data-label="Qué envía tu navegador">El CSR (dato público)</td><td data-label="Qué hace el servidor">Lo analiza en memoria y verifica la firma</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+            <tr><td data-label="Operación">Guardados / tema</td><td data-label="Qué envía tu navegador">Nada (todo es local)</td><td data-label="Qué hace el servidor">No interviene</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" id="info-garantias">
+      <h2>3. Garantías técnicas de no almacenamiento</h2>
+      <p>Las garantías no son una mera promesa: están impuestas por el propio diseño del software y por el sistema operativo.</p>
+      <ul class="guarantees">
+        <li><strong>Sin ficheros temporales.</strong> La clave, la contraseña y los datos llegan a OpenSSL por la entrada
+          estándar y por pipes anónimos en memoria. La batería de tests automáticos comprueba en cada versión que el
+          directorio temporal queda vacío tras generar claves y ZIP.</li>
+        <li><strong>Disco de solo lectura para el servicio.</strong> El servicio se ejecuta bajo systemd con
+          <code>ProtectSystem=strict</code>: todo el sistema de ficheros es de solo lectura para él y no tiene ningún directorio
+          con permiso de escritura. Aunque quisiera, no podría guardar ficheros. Además usa un <code>/tmp</code> privado
+          (<code>PrivateTmp</code>) y no puede acceder a <code>/home</code> (<code>ProtectHome</code>).</li>
+        <li><strong>Sin registros (logs).</strong> El registro de peticiones del servidor HTTP está desactivado por código y las
+          trazas de error se suprimen para que nunca puedan contener datos de una petición. La salida estándar del
+          servicio se descarta (<code>StandardOutput=null</code>) y lo único que llega al registro del sistema es la línea
+          de arranque. No se registran IPs, contenidos, nombres de dominio ni ficheros. Los tests comprueban que el servidor no escribe nada al atender peticiones.</li>
+        <li><strong>Sin volcados de memoria.</strong> Los volcados de memoria (<em>core dumps</em>) están desactivados
+          (<code>LimitCORE=0</code>), para que un fallo nunca deje una copia de la memoria con claves en el disco.</li>
+        <li><strong>Sin caché.</strong> Todas las respuestas que contienen datos llevan <code>Cache-Control: no-store</code> y
+          <code>Pragma: no-cache</code>, para que ni el navegador ni los proxies intermedios las guarden.</li>
+        <li><strong>Sin base de datos, sin cuentas y sin cookies.</strong> No existe base de datos ni registro de usuarios.
+          La web no crea cookies ni identificadores de sesión.</li>
+        <li><strong>Sin terceros.</strong> No hay analítica, publicidad, fuentes, CDN ni scripts externos. Una política de
+          seguridad de contenidos estricta (<code>Content-Security-Policy: default-src 'none'</code>) impide que la página cargue o
+          envíe nada a otro dominio. Tus datos solo viajan entre tu navegador y este servidor.</li>
+        <li><strong>Mínimo privilegio.</strong> El servicio corre con un usuario de sistema dedicado y sin privilegios, sin
+          capacidad de escalar permisos (<code>NoNewPrivileges</code>), con las llamadas al sistema filtradas y con aislamiento
+          de dispositivos, kernel y red (nivel de exposición de <code>systemd-analyze security</code>: 1.5, «OK»).</li>
+        <li><strong>Protección frente a abusos.</strong> Las peticiones tienen un tamaño máximo, tiempos límite y un número máximo de
+          generaciones simultáneas. Solo se aceptan peticiones del propio origen (protección CSRF) y la página no puede
+          incrustarse en otras webs (protección frente a <em>clickjacking</em>).</li>
+        <li><strong>Vida en memoria mínima.</strong> Los datos de cada petición solo existen en la memoria RAM del proceso mientras se
+          atiende esa petición, normalmente unos milisegundos (unos segundos para RSA 4096). Al terminar se eliminan las referencias y se fuerza la recolección de memoria.</li>
+      </ul>
+    </div>
+
+    <div class="card" id="info-limites">
+      <h2>4. Lo que esta web no puede garantizar</h2>
+      <p>Por transparencia, conviene conocer los límites de cualquier servicio web de este tipo:</p>
+      <ul>
+        <li><strong>La clave privada se genera en el servidor</strong> y viaja por la red hasta tu navegador. Su confidencialidad
+          durante el transporte depende de que accedas mediante <strong>HTTPS</strong>. Comprueba que la dirección empieza por
+          <code>https://</code> antes de generar claves.</li>
+        <li><strong>Durante la petición, los datos están en la memoria RAM del servidor.</strong> Un atacante que hubiera
+          comprometido el servidor en ese mismo momento podría, en teoría, acceder a ellos.</li>
+        <li><strong>Capas externas.</strong> Si delante del servicio hay un proxy inverso, un balanceador o una red de
+          distribución, su configuración de registros es ajena a esta aplicación. El administrador debe desactivar
+          en ellos los registros de cuerpos de petición.</li>
+        <li><strong>Tu equipo.</strong> El almacenamiento local de tu navegador no está cifrado por la web. Cualquiera con acceso a tu
+          equipo y a tu perfil de navegador, o un software malicioso o una extensión instalados en él, podría leer las claves guardadas.</li>
+        <li><strong>Para claves de máxima criticidad</strong> (autoridades de certificación, firma de código, banca…), lo más seguro
+          es generarlas en tu propia infraestructura o en un HSM, sin que salgan nunca de ella.</li>
+      </ul>
+    </div>
+
+    <div class="card" id="info-navegador">
+      <h2>5. Tus datos en el navegador</h2>
+      <ul>
+        <li>Los CSR y las claves generadas se guardan en el <code>localStorage</code> de este navegador, en este equipo y para
+          esta dirección web. No se sincronizan con ningún servidor ni con otros dispositivos.</li>
+        <li>Puedes consultarlos, descargarlos o borrarlos en cualquier momento desde la pestaña <strong>Guardados</strong>
+          («Eliminar» o «Borrar todo»).</li>
+        <li>Si borras los datos de navegación, usas el modo incógnito o cambias de navegador o equipo, los guardados
+          <strong>se pierden de forma irrecuperable</strong>: nadie, ni siquiera el administrador del servidor, puede recuperarlos.</li>
+        <li>Solo se guarda además tu preferencia de tema (día/noche) y de formato de descarga.</li>
+      </ul>
+    </div>
+
+    <div class="card" id="info-recomendaciones">
+      <h2>6. Recomendaciones de uso</h2>
+      <ul>
+        <li>Descarga tu clave privada en cuanto la generes y guárdala en un lugar seguro: un gestor de secretos o un almacenamiento cifrado.</li>
+        <li>Usa el cifrado <strong>AES-256</strong> con una contraseña robusta si la clave va a almacenarse o transportarse.</li>
+        <li>Borra los guardados de la pestaña <strong>Guardados</strong> cuando ya no los necesites, sobre todo en equipos compartidos.</li>
+        <li>No utilices esta web desde equipos públicos o que no sean de tu confianza.</li>
+        <li>Usa el apartado <strong>Decodificar</strong> para revisar el CSR antes de enviarlo a tu autoridad de certificación.</li>
+        <li>Nunca compartas tu clave privada: a la autoridad de certificación solo se le entrega el CSR.</li>
+      </ul>
+    </div>
+
+    <div class="card" id="info-actualizaciones">
+      <h2>7. Actualizaciones y gestión de vulnerabilidades</h2>
+      <ul>
+        <li>Se realizan <strong>actualizaciones periódicas en función de las vulnerabilidades que reporta GitHub a través de
+          Dependabot</strong> sobre el repositorio del proyecto.</li>
+        <li>Los componentes del sistema de los que depende la aplicación (OpenSSL y Python) proceden de los repositorios
+          oficiales de <strong>Debian 13</strong> y se mantienen al día con sus actualizaciones de seguridad.</li>
+        <li>Cada actualización pasa una <strong>batería de tests automáticos</strong> antes de desplegarse. Si alguno falla, la
+          actualización no se aplica. Si tras desplegarse el servicio no responde, se vuelve automáticamente a la versión anterior.</li>
+        <li>La aplicación no utiliza librerías de terceros: solo la biblioteca estándar de Python y el binario oficial de
+          OpenSSL. Esto reduce al mínimo la superficie expuesta a vulnerabilidades de dependencias.</li>
+      </ul>
+    </div>
+
+    <div class="card" id="info-autoria">
+      <h2>8. Autoría</h2>
+      <p>Enca's SGEN ha sido desarrollado por <strong>Andre Lopez Araujo</strong>.</p>
+    </div>
+
+    <div class="card legal" id="info-legal">
+      <h2>9. Aviso legal y exención de responsabilidad</h2>
+      <p>
+        Enca's SGEN se ofrece como un servicio de <strong>acceso gratuito, libre y sin coste alguno para el usuario final</strong>.
+        En consecuencia:
+      </p>
+      <ul>
+        <li><strong>No se garantiza ningún SLA</strong> (acuerdo de nivel de servicio) de disponibilidad, rendimiento, tiempo de respuesta ni continuidad.
+          El servicio puede interrumpirse, modificarse o retirarse en cualquier momento y sin previo aviso.</li>
+        <li><strong>No se ofrecen garantías finales en caso de ataques</strong>, intrusiones, compromisos de seguridad, vulnerabilidades
+          todavía desconocidas (<em>0-day</em>), fallos de software o hardware, ni de cualquier otro incidente, aunque se apliquen
+          las medidas descritas en esta página.</li>
+        <li>El servicio se proporciona <strong>«tal cual» y «según disponibilidad»</strong>, sin garantías de ningún tipo, expresas
+          o implícitas, incluidas las de idoneidad para un fin concreto, exactitud de los resultados o ausencia de errores.</li>
+        <li>El autor <strong>no se hace responsable</strong> de daños directos o indirectos, pérdida de datos o de claves, pérdida
+          de beneficios, interrupciones de negocio ni de cualquier otro perjuicio derivado del uso del servicio o de la
+          imposibilidad de usarlo.</li>
+        <li>El usuario es el <strong>único responsable</strong> de custodiar las claves privadas generadas, de verificar los CSR antes de
+          utilizarlos y de decidir si el servicio es adecuado para su caso de uso.</li>
+      </ul>
+      <p class="hint">Al utilizar Enca's SGEN aceptas estas condiciones. Si no estás de acuerdo, no utilices el servicio.</p>
+    </div>
+  </section>
 </main>
 
 <footer class="foot">
-  <span>OpenSSL Web v{{VERSION}}</span>
-  <span>El servidor no guarda ni registra claves ni CSR.</span>
+  <span>Enca's SGEN v{{VERSION}} · Desarrollado por Andre Lopez Araujo</span>
+  <span>El servidor no guarda ni registra claves ni CSR · Servicio gratuito sin SLA · <a href="#info" data-goto="info">Información y aviso legal</a></span>
 </footer>
 
 <template id="tpl-san">

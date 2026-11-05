@@ -1,0 +1,17 @@
+# Dependabot: avisos y PR automáticos de actualización de seguridad.
+# La aplicación no usa librerías de terceros (solo la biblioteca estándar de
+# Python y el binario openssl de Debian), así que lo que se vigila son las
+# acciones de GitHub usadas por el CI. Python y OpenSSL se actualizan con las
+# actualizaciones de seguridad de Debian 13 (apt).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "security"
+    commit-message:
+      prefix: "deps"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Servidor HTTP de OpenSSL Web.
+"""Servidor HTTP de Enca's SGEN.
 
 Solo usa la biblioteca estándar de Python. No registra peticiones ni datos:
   * ``log_message`` y ``log_error`` están anulados.

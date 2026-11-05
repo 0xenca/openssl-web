@@ -1,0 +1,32 @@
+name: Tests (Debian 13)
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Semanal: detecta regresiones con las actualizaciones de seguridad de Debian.
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    steps:
+      - name: Instalar dependencias del sistema
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 openssl ca-certificates git
+      - uses: actions/checkout@v4
+      - name: Versiones
+        run: |
+          cat /etc/debian_version
+          python3 --version
+          openssl version
+      - name: Tests
+        run: python3 -B -m unittest discover -s tests -t . -v
+      - name: Comprobar sintaxis del instalador
+        run: bash -n install.sh

@@ -1,4 +1,6 @@
-# OpenSSL Web
+# Enca's SGEN
+
+**Desarrollado por Andre Lopez Araujo.**
 
 Una web sencilla para generar peticiones de certificado SSL/TLS (**CSR**) y su **clave privada**, y para desglosar y validar CSR existentes.
 
@@ -7,6 +9,7 @@ Una web sencilla para generar peticiones de certificado SSL/TLS (**CSR**) y su *
 - **Descargas:** solo la KEY, solo el CSR, o ambos en un `.zip`, con extensión `.csr`/`.key` o `.txt` (`nombre-csr.txt`, `nombre-key.txt`) para las plataformas que solo admiten texto.
 - **Desglose de CSR:** pega un CSR (o abre el fichero) y verás el sujeto, la clave pública, la firma, los SAN y las extensiones, con comprobaciones de buenas prácticas (firma válida, tamaño de clave, SHA-1, CN dentro de los SAN…) y la salida completa de `openssl`.
 - **Interfaz:** limpia, con modo día y noche, adaptada a móvil y **sin dependencias externas** de CSS ni JavaScript.
+- **Información:** una pestaña que explica con detalle cómo funciona la web, qué datos trata cada operación, las garantías de no almacenamiento y sus límites, la política de actualizaciones, la autoría y el aviso legal.
 
 ## Privacidad: qué guarda el servidor y qué no
 
@@ -25,6 +28,14 @@ Cómo trata cada petición el servidor:
 - **Servicio aislado:** no genera volcados de memoria (`LimitCORE=0`), corre con un usuario sin privilegios y un sistema de ficheros de solo lectura (`ProtectSystem=strict`), y tiene `PrivateTmp`. La puntuación de `systemd-analyze security` es **1.5 (OK)**.
 
 > ⚠️ La clave privada viaja entre el servidor y el navegador. Si el servicio no es solo local, publícalo **siempre por HTTPS**, ya sea con un proxy inverso (nginx, Apache…) o con el HTTPS integrado (ver la configuración).
+
+## Actualizaciones de seguridad
+
+Se hacen actualizaciones periódicas en función de las vulnerabilidades que reporta GitHub a través de **Dependabot** (`.github/dependabot.yml`). Python y OpenSSL se actualizan con los parches de seguridad de Debian 13. El CI (`.github/workflows/tests.yml`) pasa los tests en Debian 13 en cada cambio y cada semana. Más detalles en [SECURITY.md](SECURITY.md).
+
+## Aviso legal
+
+Enca's SGEN es un servicio de acceso **gratuito, libre y sin coste** para el usuario final. **No se garantiza ningún SLA** ni se ofrecen garantías finales en caso de ataques, intrusiones u otros incidentes. Se proporciona «tal cual», sin garantías de ningún tipo. El texto completo está en el apartado «Información» de la web.
 
 ## Requisitos
 
@@ -116,5 +127,6 @@ deploy/opensslweb.service  Unidad systemd endurecida
 deploy/opensslweb.env      Configuración por defecto
 install.sh               Instalador / actualizador
 tests/                   Tests (unittest)
+.github/                 Dependabot y CI (tests en Debian 13)
 VERSION                  Versión desplegada
 ```

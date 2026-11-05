@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenSSL Web - generador de CSR y claves privadas
+Description=Enca's SGEN - generador de CSR y claves privadas
 Documentation=file:///opt/opensslweb/README.md
 After=network-online.target
 Wants=network-online.target
