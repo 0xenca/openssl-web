@@ -106,23 +106,109 @@
     return Promise.resolve();
   }
 
-  function api(path, body) {
-    return fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      cache: "no-store",
-      credentials: "same-origin"
-    }).then(function (res) {
+  /* ------------------------------------------------------------------ */
+  /* Cifrado de las comunicaciones (protocolo sgen1)                    */
+  /*   1. GET /api/key  -> clave pública ECDH P-256 efímera del servidor */
+  /*   2. Par ECDH efímero del navegador + HKDF-SHA256 -> 2 claves AES   */
+  /*   3. Petición y respuesta cifradas con AES-256-GCM                 */
+  /* El servidor destruye su clave privada tras cada petición.          */
+  /* ------------------------------------------------------------------ */
+  var E2E_INFO = "encas-sgen e2e v1";
+
+  function cryptoAvailable() {
+    return !!(window.crypto && window.crypto.subtle && window.isSecureContext !== false);
+  }
+
+  function b64encode(bytes) {
+    var out = "";
+    for (var i = 0; i < bytes.length; i += 0x8000) {
+      out += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(out);
+  }
+
+  function b64decode(text) {
+    var bin = atob(text);
+    var out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function utf8(text) { return new TextEncoder().encode(text); }
+
+  function jsonFetch(path, opts) {
+    return fetch(path, opts).then(function (res) {
       var ctype = res.headers.get("Content-Type") || "";
-      if (!res.ok) {
-        if (ctype.indexOf("application/json") === 0) {
-          return res.json().then(function (j) { throw new Error(j.error || "Error " + res.status); });
-        }
-        throw new Error("Error " + res.status);
-      }
-      return ctype.indexOf("application/json") === 0 ? res.json() : res.blob();
+      if (ctype.indexOf("application/json") !== 0) throw new Error("Error " + res.status);
+      return res.json().then(function (j) { return { status: res.status, ok: res.ok, body: j }; });
     });
+  }
+
+  function api(path, body) {
+    if (!cryptoAvailable()) {
+      return Promise.reject(new Error("El cifrado de las comunicaciones requiere acceder a la web por HTTPS."));
+    }
+    var subtle = window.crypto.subtle;
+    var server, clientKeys, kid, resKey;
+    return jsonFetch("/api/key", { method: "GET", cache: "no-store", credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok || r.body.v !== 1) throw new Error((r.body && r.body.error) || "No se pudo iniciar el cifrado");
+        server = r.body;
+        kid = b64decode(server.kid);
+        return Promise.all([
+          subtle.importKey("raw", b64decode(server.publicKey), { name: "ECDH", namedCurve: "P-256" }, false, []),
+          subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"])
+        ]);
+      })
+      .then(function (keys) {
+        clientKeys = keys[1];
+        return subtle.deriveBits({ name: "ECDH", public: keys[0] }, clientKeys.privateKey, 256);
+      })
+      .then(function (shared) {
+        return subtle.importKey("raw", shared, "HKDF", false, ["deriveBits"]);
+      })
+      .then(function (hkdfKey) {
+        return subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: kid, info: utf8(E2E_INFO) }, hkdfKey, 512);
+      })
+      .then(function (okm) {
+        okm = new Uint8Array(okm);
+        return Promise.all([
+          subtle.importKey("raw", okm.slice(0, 32), "AES-GCM", false, ["encrypt"]),
+          subtle.importKey("raw", okm.slice(32), "AES-GCM", false, ["decrypt"]),
+          subtle.exportKey("raw", clientKeys.publicKey)
+        ]);
+      })
+      .then(function (k) {
+        resKey = k[1];
+        var iv = window.crypto.getRandomValues(new Uint8Array(12));
+        var epk = new Uint8Array(k[2]);
+        return subtle.encrypt({ name: "AES-GCM", iv: iv, additionalData: utf8("sgen1|req|" + path) },
+          k[0], utf8(JSON.stringify(body))).then(function (ct) {
+          return JSON.stringify({ v: 1, kid: server.kid, epk: b64encode(epk), iv: b64encode(iv),
+            ct: b64encode(new Uint8Array(ct)) });
+        });
+      })
+      .then(function (envelope) {
+        body = null; // no conservamos el texto en claro más de lo necesario
+        return jsonFetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: envelope,
+          cache: "no-store",
+          credentials: "same-origin"
+        });
+      })
+      .then(function (r) {
+        if (!r.body || r.body.v !== 1 || !r.body.ct) {
+          throw new Error((r.body && r.body.error) || "Error " + r.status);
+        }
+        return subtle.decrypt({ name: "AES-GCM", iv: b64decode(r.body.iv), additionalData: utf8("sgen1|res|" + path) },
+          resKey, b64decode(r.body.ct)).then(function (plain) {
+          var obj = JSON.parse(new TextDecoder().decode(plain));
+          if (obj && obj.error) throw new Error(obj.error);
+          return obj;
+        });
+      });
   }
 
   function saveBlob(blob, filename) {
@@ -147,7 +233,9 @@
     if (button) button.disabled = true;
     // El servidor comprime en memoria y no conserva nada.
     return api("/api/zip", { name: entry.name, format: fmt, csr: entry.csr, key: entry.key })
-      .then(function (blob) { saveBlob(blob, entry.name + ".zip"); })
+      .then(function (res) {
+        saveBlob(new Blob([b64decode(res.zip)], { type: "application/zip" }), res.filename || entry.name + ".zip");
+      })
       .catch(function (err) { toast(err.message); })
       .then(function () { if (button) button.disabled = false; });
   }
@@ -615,6 +703,7 @@
     });
 
     updateSavedCount();
+    if (!cryptoAvailable()) $("#e2e-warning").hidden = false;
     $all("[data-goto]").forEach(function (a) {
       a.addEventListener("click", function (ev) {
         ev.preventDefault();

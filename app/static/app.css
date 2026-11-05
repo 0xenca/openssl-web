@@ -252,6 +252,8 @@ table.kv details[open] summary { margin-bottom: 6px; }
 pre.raw { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0 0; }
 .match { margin-top: 12px; }
 
+.warn-banner { border-color: var(--warn); background: var(--warn-soft); color: var(--text); }
+
 /* ---------- información ---------- */
 .info p, .info li { max-width: 80ch; }
 .info p { margin: 0 0 10px; }

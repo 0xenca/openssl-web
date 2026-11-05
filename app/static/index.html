@@ -31,6 +31,10 @@
 </header>
 
 <main>
+  <div class="card warn-banner" id="e2e-warning" role="alert" hidden>
+    <strong>Conexión no segura.</strong> Esta web cifra todas sus comunicaciones con claves efímeras y para ello
+    el navegador exige acceder por <code>https://</code>. Mientras accedas por HTTP no podrás generar, comprimir ni desglosar.
+  </div>
   <!-- ============================ GENERAR ============================ -->
   <section id="tab-generate" class="panel" role="tabpanel">
     <form id="gen-form" novalidate autocomplete="off">
@@ -205,23 +209,29 @@
   <!-- ============================ INFORMACIÓN ============================ -->
   <section id="tab-info" class="panel info" role="tabpanel" hidden>
     <div class="card intro">
-      <h2>Enca's SGEN: cómo funciona y qué garantías ofrece</h2>
+      <h2>Enca's SGEN: cómo funciona, cifrado y política de tratamiento de datos</h2>
       <p>
         <strong>Enca's SGEN</strong> es una herramienta web para generar <strong>peticiones de firma de certificado (CSR)</strong>
         y sus <strong>claves privadas</strong>, y para desglosar y validar CSR existentes. Está pensada para que la
         clave privada y el CSR <strong>vivan únicamente en tu navegador</strong>. El servidor solo interviene
         durante los instantes imprescindibles para ejecutar OpenSSL y no conserva nada.
       </p>
+      <p>
+        Además, <strong>todos los datos que se intercambian entre tu navegador y el servidor viajan cifrados con criptografía de
+        clave pública y privada</strong>. Por cada petición se usa una <strong>clave privada nueva</strong>, que el servidor
+        guarda solo en memoria y <strong>destruye en cuanto termina</strong> esa petición.
+      </p>
       <nav class="toc" aria-label="Índice">
         <a href="#info-flujo">1. Funcionamiento paso a paso</a>
-        <a href="#info-datos">2. Qué datos se tratan en cada operación</a>
-        <a href="#info-garantias">3. Garantías de no almacenamiento</a>
-        <a href="#info-limites">4. Lo que esta web no puede garantizar</a>
-        <a href="#info-navegador">5. Tus datos en el navegador</a>
-        <a href="#info-recomendaciones">6. Recomendaciones de uso</a>
-        <a href="#info-actualizaciones">7. Actualizaciones y vulnerabilidades</a>
-        <a href="#info-autoria">8. Autoría</a>
-        <a href="#info-legal">9. Aviso legal y exención de responsabilidad</a>
+        <a href="#info-cifrado">2. Cifrado de las comunicaciones</a>
+        <a href="#info-datos">3. Política de tratamiento de datos</a>
+        <a href="#info-garantias">4. Garantías de no almacenamiento</a>
+        <a href="#info-limites">5. Lo que esta web no puede garantizar</a>
+        <a href="#info-navegador">6. Tus datos en el navegador</a>
+        <a href="#info-recomendaciones">7. Recomendaciones de uso</a>
+        <a href="#info-actualizaciones">8. Actualizaciones y vulnerabilidades</a>
+        <a href="#info-autoria">9. Autoría</a>
+        <a href="#info-legal">10. Aviso legal y exención de responsabilidad</a>
       </nav>
     </div>
 
@@ -234,8 +244,11 @@
           algoritmo de firma (SHA-256/384/512), cifrado AES opcional de la clave (AES-128/192/256-CBC con contraseña),
           formato de la clave (PKCS#8 o tradicional), datos del sujeto (CN, O, OU, L, ST, C, correo),
           Subject Alternative Names y extensiones (Key Usage, Extended Key Usage y OCSP Must-Staple).</li>
-        <li><strong>El navegador envía esas opciones al servidor</strong> en una única petición <code>POST /api/generate</code>.
-          Solo viajan los datos del formulario y, si eliges cifrado AES, la contraseña. No se envían cookies ni identificadores.</li>
+        <li><strong>Tu navegador cifra la petición</strong> antes de enviarla. Pide al servidor una clave pública de un solo
+          uso, cifra con ella los datos del formulario y la contraseña (ver el apartado 2) y los envía en una única petición
+          <code>POST /api/generate</code>. No se envían cookies ni identificadores.</li>
+        <li><strong>El servidor descifra la petición</strong> con la clave privada correspondiente. Primero la retira de la
+          memoria para que no pueda volver a usarse.</li>
         <li><strong>El servidor valida cada campo con listas blancas</strong> (algoritmos permitidos, formato de nombres DNS,
           IP, correo y URI, longitudes máximas, ausencia de caracteres de control). Todo lo que no cumpla se rechaza
           antes de llegar a OpenSSL. Los datos nunca se usan para construir ficheros de configuración, así que
@@ -247,10 +260,10 @@
         <li><strong>Si elegiste cifrado AES</strong>, la clave se cifra con <code>openssl pkey</code>. La contraseña se entrega a
           OpenSSL por un <em>descriptor de fichero anónimo</em> (<code>-passout fd:N</code>, un pipe en memoria), de modo que
           nunca aparece en la línea de comandos, en la lista de procesos ni en el disco.</li>
-        <li><strong>El servidor devuelve la clave y el CSR</strong> en la respuesta HTTP, marcada con
-          <code>Cache-Control: no-store</code>, y descarta todas las referencias en memoria al terminar la petición.</li>
-        <li><strong>Tu navegador guarda el resultado</strong> en su almacenamiento local (<code>localStorage</code>) y te lo muestra.
-          La contraseña se borra del formulario en cuanto deja de ser necesaria y no se guarda en ningún sitio.</li>
+        <li><strong>El servidor cifra la respuesta</strong> (la clave y el CSR) con la clave de respuesta de esa sesión, la envía
+          marcada con <code>Cache-Control: no-store</code> y destruye las claves de la sesión y todas las referencias en memoria.</li>
+        <li><strong>Tu navegador descifra la respuesta</strong>, guarda el resultado en su almacenamiento local
+          (<code>localStorage</code>) y te lo muestra. La contraseña se borra del formulario en cuanto deja de ser necesaria y no se guarda en ningún sitio.</li>
       </ol>
 
       <h3>1.2 Descarga individual de la KEY o del CSR</h3>
@@ -263,36 +276,161 @@
 
       <h3>1.3 Descarga conjunta en .zip</h3>
       <ol class="steps">
-        <li>Al pulsar «Descargar ambos (.zip)», tu navegador envía la clave y el CSR al servidor (<code>POST /api/zip</code>).</li>
-        <li>El servidor comprueba que ambos tienen formato PEM válido y construye el ZIP <strong>en memoria RAM</strong>
+        <li>Al pulsar «Descargar ambos (.zip)», tu navegador cifra la clave y el CSR con una clave de un solo uso y los envía al servidor (<code>POST /api/zip</code>).</li>
+        <li>El servidor los descifra, comprueba que ambos tienen formato PEM válido y construye el ZIP <strong>en memoria RAM</strong>
           (un búfer <code>BytesIO</code>). No se escribe ningún fichero, ni temporal ni definitivo.</li>
-        <li>El ZIP se devuelve en la misma respuesta, con <code>Cache-Control: no-store</code>, y el búfer se libera
-          inmediatamente. El servidor no conserva copia.</li>
+        <li>El ZIP, y también su nombre de fichero, se devuelven <strong>cifrados</strong> en la misma respuesta, con
+          <code>Cache-Control: no-store</code>. Tu navegador lo descifra y lo descarga. El servidor libera el búfer y las claves de la sesión y no conserva copia.</li>
       </ol>
 
       <h3>1.4 Desglose y validación de un CSR</h3>
       <p>
-        El CSR pegado se envía a <code>/api/decode</code>. El servidor lo interpreta en memoria con un analizador ASN.1
-        propio y verifica su firma con OpenSSL. Te devuelve el sujeto, la clave pública, el algoritmo de firma, los SAN,
-        las extensiones, una lista de comprobaciones de buenas prácticas y la salida completa de OpenSSL. Un CSR es,
-        por definición, información pública (es lo que se entrega a la autoridad de certificación). Aun así, el servidor
-        tampoco lo almacena. Si por error pegas una clave privada en ese cuadro, <strong>el navegador se niega a enviarla</strong>.
-        Si el CSR coincide con uno de tus guardados, la web te lo indica comparándolo localmente, sin enviar tus guardados a ningún sitio.
+        El CSR pegado se envía cifrado a <code>/api/decode</code>. El servidor lo descifra y lo interpreta en memoria con un
+        analizador ASN.1 propio, y verifica su firma con OpenSSL. Te devuelve, también cifrados, el sujeto, la clave pública,
+        el algoritmo de firma, los SAN, las extensiones, una lista de comprobaciones de buenas prácticas y la salida completa
+        de OpenSSL. Un CSR es, por definición, información pública (es lo que se entrega a la autoridad de certificación).
+        Aun así, el servidor tampoco lo almacena. Si por error pegas una clave privada en ese cuadro, <strong>el navegador se
+        niega a enviarla</strong>. Si el CSR coincide con uno de tus guardados, la web te lo indica comparándolo localmente, sin enviar tus guardados a ningún sitio.
+      </p>
+    </div>
+
+    <div class="card" id="info-cifrado">
+      <h2>2. Cifrado de las comunicaciones</h2>
+      <p>
+        Todo lo que se envía entre tu navegador y el servidor está protegido por <strong>dos capas de cifrado
+        independientes</strong>, ambas basadas en criptografía de clave pública y privada:
+      </p>
+      <ul>
+        <li><strong>Capa 1: HTTPS (TLS).</strong> Cifra la conexión completa, incluidas todas las peticiones
+          <code>GET</code> y <code>POST</code>, y autentica el servidor con su certificado, para que sepas que hablas con el servidor legítimo.</li>
+        <li><strong>Capa 2: cifrado propio de la aplicación con claves efímeras.</strong> Además de TLS, el contenido de cada
+          operación (formulario, contraseña, clave privada, CSR, ZIP y errores) se cifra dentro del propio navegador y solo se
+          descifra dentro del proceso de la aplicación. Cualquier elemento intermedio (proxy inverso, balanceador, CDN,
+          cortafuegos con inspección TLS o sus registros) solo ve datos cifrados.</li>
+      </ul>
+
+      <h3>2.1 Cómo funciona el cifrado de la aplicación, petición a petición</h3>
+      <ol class="steps">
+        <li><strong>El navegador pide una clave pública</strong> (<code>GET /api/key</code>). El servidor genera en ese momento un
+          <strong>par de claves nuevo</strong> (curva elíptica ECDH P-256). Guarda la <strong>clave privada solo en memoria RAM</strong>,
+          asociada a un identificador aleatorio de un solo uso, y envía al navegador únicamente la <strong>clave pública</strong>.</li>
+        <li><strong>El navegador genera su propio par de claves efímero</strong> (ECDH P-256) con la API criptográfica integrada en el
+          navegador (WebCrypto), sin librerías externas. Con su clave privada y la clave pública del servidor calcula un
+          <strong>secreto compartido</strong> que nunca viaja por la red.</li>
+        <li><strong>Se derivan dos claves simétricas</strong> con HKDF-SHA256: una para cifrar la petición y otra para cifrar la respuesta.</li>
+        <li><strong>El navegador cifra los datos con AES-256-GCM</strong>, un cifrado autenticado: cualquier alteración del mensaje se
+          detecta y se rechaza. El mensaje queda además ligado a la operación concreta, así que un mensaje para «desglosar» no
+          sirve para «generar». El navegador envía su clave pública y el mensaje cifrado.</li>
+        <li><strong>El servidor retira su clave privada de la memoria</strong> antes incluso de usarla (uso único), calcula el mismo
+          secreto compartido y descifra la petición.</li>
+        <li><strong>El servidor hace su trabajo</strong> (generar, comprimir o desglosar) y <strong>cifra la respuesta</strong> con la
+          clave de respuesta. Los errores de validación también viajan cifrados.</li>
+        <li><strong>Al terminar, el servidor destruye su clave privada</strong>, el secreto compartido y las claves derivadas. La
+          librería criptográfica (OpenSSL) sobrescribe el material de la clave privada al liberarla.</li>
+        <li><strong>El navegador descifra la respuesta.</strong> Sus propias claves efímeras se crean como no exportables y se descartan al terminar.</li>
+      </ol>
+
+      <h3>2.2 Propiedades de seguridad</h3>
+      <ul>
+        <li><strong>Una clave por petición:</strong> cada operación usa un par de claves distinto, generado al momento. Nunca se reutiliza una clave.</li>
+        <li><strong>Secreto perfecto hacia adelante:</strong> como las claves privadas se destruyen tras cada petición, aunque alguien
+          grabara hoy el tráfico cifrado, no podría descifrarlo en el futuro ni comprometiendo el servidor.</li>
+        <li><strong>Sin repeticiones:</strong> un mensaje capturado no puede reenviarse, porque la clave privada que permitía
+          descifrarlo ya no existe.</li>
+        <li><strong>Caducidad:</strong> si una clave pública se solicita pero no se llega a usar, su clave privada se destruye
+          automáticamente a los <strong>60 segundos</strong>. Ante una avalancha de solicitudes, se destruyen primero las más antiguas.</li>
+        <li><strong>Las peticiones sin cifrar se rechazan:</strong> el servidor no procesa ningún dato que no llegue cifrado con este protocolo.</li>
+        <li><strong>Algoritmos estándar:</strong> ECDH sobre P-256, HKDF-SHA256 y AES-256-GCM, implementados por WebCrypto en el
+          navegador y por OpenSSL (a través del paquete oficial de Debian <code>python3-cryptography</code>) en el servidor.</li>
+      </ul>
+
+      <h3>2.3 Qué viaja cifrado</h3>
+      <div class="table-wrap">
+        <table class="kv data-table">
+          <thead>
+            <tr><th>Petición</th><th>Contenido</th><th>HTTPS (capa 1)</th><th>Cifrado efímero (capa 2)</th></tr>
+          </thead>
+          <tbody>
+            <tr><td data-label="Petición"><code>POST /api/generate</code></td><td data-label="Contenido">Formulario, contraseña, clave privada y CSR</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)"><strong>Sí</strong>, petición y respuesta</td></tr>
+            <tr><td data-label="Petición"><code>POST /api/zip</code></td><td data-label="Contenido">Clave privada, CSR, ZIP y nombre del fichero</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)"><strong>Sí</strong>, petición y respuesta</td></tr>
+            <tr><td data-label="Petición"><code>POST /api/decode</code></td><td data-label="Contenido">CSR y su desglose</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)"><strong>Sí</strong>, petición y respuesta</td></tr>
+            <tr><td data-label="Petición"><code>GET /api/key</code></td><td data-label="Contenido">Solo la clave pública efímera (es pública por definición)</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)">No aplica: es la propia clave pública</td></tr>
+            <tr><td data-label="Petición"><code>GET</code> de la página (HTML, CSS, JS, icono)</td><td data-label="Contenido">El código de la web, igual para todos; ningún dato tuyo</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)">No aplica: es el código que realiza el cifrado</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="hint">
+        El código de la página no puede cifrarse con la capa 2 porque es precisamente el programa que la ejecuta. Por eso
+        estas descargas se protegen con HTTPS. Ninguna petición <code>GET</code> contiene datos del usuario. El navegador solo permite
+        este cifrado en conexiones seguras: si accedes por <code>http://</code>, la web lo avisa y no envía ningún dato.
       </p>
     </div>
 
     <div class="card" id="info-datos">
-      <h2>2. Qué datos se tratan en cada operación</h2>
+      <h2>3. Política de tratamiento de datos</h2>
+
+      <h3>3.1 Qué datos se tratan</h3>
+      <ul>
+        <li><strong>Datos del certificado</strong> que introduces: Common Name, organización, unidad, localidad, provincia, país,
+          correo electrónico, nombres alternativos (dominios, IP, correos, URI) y opciones técnicas.</li>
+        <li><strong>Contraseña de cifrado de la clave</strong>, solo si eliges cifrado AES.</li>
+        <li><strong>Clave privada y CSR</strong> generados, y los que envías para comprimir en ZIP o desglosar.</li>
+        <li>No se piden ni se tratan nombres de usuario, cuentas, cookies, identificadores de dispositivo ni datos de navegación.</li>
+      </ul>
+
+      <h3>3.2 Finalidad</h3>
+      <p>
+        Los datos se tratan <strong>exclusivamente</strong> para ejecutar la operación que solicitas (generar el CSR y la clave,
+        comprimirlos en ZIP o desglosar un CSR) y devolverte el resultado. No se usan para ningún otro fin: ni estadísticas,
+        ni publicidad, ni perfiles, ni entrenamiento, ni comunicaciones.
+      </p>
+
+      <h3>3.3 Forma de tratamiento</h3>
+      <ul>
+        <li>Los datos llegan <strong>cifrados</strong> (apartado 2) y solo se descifran dentro de la memoria RAM del proceso de la aplicación.</li>
+        <li>Se procesan en memoria. OpenSSL los recibe por <em>pipes</em> en memoria y nunca se escriben en disco.</li>
+        <li>La respuesta se devuelve <strong>cifrada</strong> y, a continuación, se descartan los datos y las claves de la sesión.</li>
+      </ul>
+
+      <h3>3.4 Plazo de conservación</h3>
+      <ul>
+        <li><strong>En el servidor: ninguno.</strong> Los datos solo existen en memoria mientras se atiende la petición
+          (normalmente milisegundos y, como máximo, unos segundos para claves RSA 4096).</li>
+        <li><strong>Claves de cifrado efímeras del servidor:</strong> se destruyen al terminar la petición o, si no se llegan a usar, a los 60 segundos.</li>
+        <li><strong>En tu navegador:</strong> hasta que tú los borres (apartado 6).</li>
+      </ul>
+
+      <h3>3.5 Destinatarios y terceros</h3>
+      <p>
+        <strong>Ninguno.</strong> Los datos no se ceden, venden ni comunican a terceros, ni se transfieren fuera del servidor que atiende
+        tu petición. La web no carga recursos de terceros (analítica, fuentes, CDN, publicidad) que pudieran recibir información.
+      </p>
+
+      <h3>3.6 Registros y cookies</h3>
+      <p>
+        No se registran direcciones IP, contenidos, dominios ni ficheros. La web <strong>no utiliza cookies</strong>. En tu navegador
+        solo se usa el almacenamiento local para tus guardados y tus preferencias (tema y formato de descarga).
+      </p>
+
+      <h3>3.7 Tus derechos</h3>
+      <p>
+        Como el servidor no conserva ningún dato tuyo, no existe información almacenada que consultar, rectificar o suprimir
+        en él. Los únicos datos que perduran están en tu navegador y bajo tu control exclusivo: puedes consultarlos y
+        eliminarlos en cualquier momento desde la pestaña <strong>Guardados</strong>.
+      </p>
+
+      <h3>3.8 Resumen por operación</h3>
       <div class="table-wrap">
         <table class="kv data-table">
           <thead>
             <tr><th>Operación</th><th>Qué envía tu navegador</th><th>Qué hace el servidor</th><th>Qué queda en el servidor</th></tr>
           </thead>
           <tbody>
-            <tr><td data-label="Operación">Generar</td><td data-label="Qué envía tu navegador">Opciones del formulario y contraseña AES (si la eliges)</td><td data-label="Qué hace el servidor">Ejecuta OpenSSL por pipes en memoria y devuelve clave + CSR</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+            <tr><td data-label="Operación">Generar</td><td data-label="Qué envía tu navegador">Opciones del formulario y contraseña AES (si la eliges), <strong>cifrado</strong></td><td data-label="Qué hace el servidor">Descifra, ejecuta OpenSSL por pipes en memoria y devuelve clave + CSR <strong>cifrados</strong></td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
             <tr><td data-label="Operación">Descargar KEY / CSR</td><td data-label="Qué envía tu navegador">Nada (no hay petición)</td><td data-label="Qué hace el servidor">No interviene</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
-            <tr><td data-label="Operación">Descargar .zip</td><td data-label="Qué envía tu navegador">Clave y CSR</td><td data-label="Qué hace el servidor">Comprime en RAM y devuelve el ZIP</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
-            <tr><td data-label="Operación">Desglosar CSR</td><td data-label="Qué envía tu navegador">El CSR (dato público)</td><td data-label="Qué hace el servidor">Lo analiza en memoria y verifica la firma</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+            <tr><td data-label="Operación">Descargar .zip</td><td data-label="Qué envía tu navegador">Clave y CSR, <strong>cifrados</strong></td><td data-label="Qué hace el servidor">Descifra, comprime en RAM y devuelve el ZIP <strong>cifrado</strong></td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+            <tr><td data-label="Operación">Desglosar CSR</td><td data-label="Qué envía tu navegador">El CSR, <strong>cifrado</strong></td><td data-label="Qué hace el servidor">Descifra, analiza en memoria, verifica la firma y devuelve el desglose <strong>cifrado</strong></td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+            <tr><td data-label="Operación">Clave de sesión</td><td data-label="Qué envía tu navegador">Solicitud sin datos</td><td data-label="Qué hace el servidor">Genera un par de claves efímero y entrega la pública</td><td data-label="Qué queda en el servidor">La clave privada, <strong>solo en RAM</strong>, hasta usarla (máx. 60 s)</td></tr>
             <tr><td data-label="Operación">Guardados / tema</td><td data-label="Qué envía tu navegador">Nada (todo es local)</td><td data-label="Qué hace el servidor">No interviene</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
           </tbody>
         </table>
@@ -300,9 +438,12 @@
     </div>
 
     <div class="card" id="info-garantias">
-      <h2>3. Garantías técnicas de no almacenamiento</h2>
+      <h2>4. Garantías técnicas de no almacenamiento</h2>
       <p>Las garantías no son una mera promesa: están impuestas por el propio diseño del software y por el sistema operativo.</p>
       <ul class="guarantees">
+        <li><strong>Comunicaciones cifradas con clave efímera.</strong> Cada petición con datos se cifra con un par de claves nuevo.
+          El servidor guarda la clave privada solo en memoria y la destruye al terminar la petición (o a los 60 segundos si no se usa).
+          Las peticiones sin cifrar se rechazan.</li>
         <li><strong>Sin ficheros temporales.</strong> La clave, la contraseña y los datos llegan a OpenSSL por la entrada
           estándar y por pipes anónimos en memoria. La batería de tests automáticos comprueba en cada versión que el
           directorio temporal queda vacío tras generar claves y ZIP.</li>
@@ -315,7 +456,7 @@
           servicio se descarta (<code>StandardOutput=null</code>) y lo único que llega al registro del sistema es la línea
           de arranque. No se registran IPs, contenidos, nombres de dominio ni ficheros. Los tests comprueban que el servidor no escribe nada al atender peticiones.</li>
         <li><strong>Sin volcados de memoria.</strong> Los volcados de memoria (<em>core dumps</em>) están desactivados
-          (<code>LimitCORE=0</code>), para que un fallo nunca deje una copia de la memoria con claves en el disco.</li>
+          (<code>LimitCORE=0</code>), para que un fallo nunca deje en el disco una copia de la memoria con claves.</li>
         <li><strong>Sin caché.</strong> Todas las respuestas que contienen datos llevan <code>Cache-Control: no-store</code> y
           <code>Pragma: no-cache</code>, para que ni el navegador ni los proxies intermedios las guarden.</li>
         <li><strong>Sin base de datos, sin cuentas y sin cookies.</strong> No existe base de datos ni registro de usuarios.
@@ -330,22 +471,27 @@
           generaciones simultáneas. Solo se aceptan peticiones del propio origen (protección CSRF) y la página no puede
           incrustarse en otras webs (protección frente a <em>clickjacking</em>).</li>
         <li><strong>Vida en memoria mínima.</strong> Los datos de cada petición solo existen en la memoria RAM del proceso mientras se
-          atiende esa petición, normalmente unos milisegundos (unos segundos para RSA 4096). Al terminar se eliminan las referencias y se fuerza la recolección de memoria.</li>
+          atiende esa petición. Al terminar se eliminan las referencias y se fuerza la recolección de memoria.</li>
       </ul>
     </div>
 
     <div class="card" id="info-limites">
-      <h2>4. Lo que esta web no puede garantizar</h2>
+      <h2>5. Lo que esta web no puede garantizar</h2>
       <p>Por transparencia, conviene conocer los límites de cualquier servicio web de este tipo:</p>
       <ul>
-        <li><strong>La clave privada se genera en el servidor</strong> y viaja por la red hasta tu navegador. Su confidencialidad
-          durante el transporte depende de que accedas mediante <strong>HTTPS</strong>. Comprueba que la dirección empieza por
-          <code>https://</code> antes de generar claves.</li>
-        <li><strong>Durante la petición, los datos están en la memoria RAM del servidor.</strong> Un atacante que hubiera
-          comprometido el servidor en ese mismo momento podría, en teoría, acceder a ellos.</li>
+        <li><strong>La clave privada se genera en el servidor</strong> y viaja hasta tu navegador. Viaja doblemente cifrada, pero
+          la identidad del servidor la garantiza su certificado HTTPS. Comprueba que la dirección empieza por <code>https://</code>
+          y que el navegador no muestra avisos de certificado antes de generar claves.</li>
+        <li><strong>El código de la web lo entrega el propio servidor.</strong> Esto es inherente a cualquier aplicación web: si
+          el servidor estuviera comprometido, un atacante podría modificar ese código. El cifrado protege los datos en
+          tránsito y frente a intermediarios, no frente a un servidor comprometido.</li>
+        <li><strong>Durante la petición, los datos están descifrados en la memoria RAM del servidor</strong>, que es donde se procesan.
+          Un atacante que hubiera comprometido el servidor en ese mismo momento podría, en teoría, acceder a ellos.</li>
+        <li><strong>Borrado de memoria.</strong> Las claves privadas efímeras se liberan con OpenSSL, que sobrescribe su
+          contenido. El resto de datos intermedios se descartan en cuanto dejan de usarse, pero el lenguaje de programación
+          (Python) no permite garantizar la sobrescritura inmediata de cada copia en memoria: el sistema reutiliza esa memoria.</li>
         <li><strong>Capas externas.</strong> Si delante del servicio hay un proxy inverso, un balanceador o una red de
-          distribución, su configuración de registros es ajena a esta aplicación. El administrador debe desactivar
-          en ellos los registros de cuerpos de petición.</li>
+          distribución, solo podrán ver datos cifrados por la capa 2, pero su configuración de registros es ajena a esta aplicación.</li>
         <li><strong>Tu equipo.</strong> El almacenamiento local de tu navegador no está cifrado por la web. Cualquiera con acceso a tu
           equipo y a tu perfil de navegador, o un software malicioso o una extensión instalados en él, podría leer las claves guardadas.</li>
         <li><strong>Para claves de máxima criticidad</strong> (autoridades de certificación, firma de código, banca…), lo más seguro
@@ -354,7 +500,7 @@
     </div>
 
     <div class="card" id="info-navegador">
-      <h2>5. Tus datos en el navegador</h2>
+      <h2>6. Tus datos en el navegador</h2>
       <ul>
         <li>Los CSR y las claves generadas se guardan en el <code>localStorage</code> de este navegador, en este equipo y para
           esta dirección web. No se sincronizan con ningún servidor ni con otros dispositivos.</li>
@@ -363,12 +509,14 @@
         <li>Si borras los datos de navegación, usas el modo incógnito o cambias de navegador o equipo, los guardados
           <strong>se pierden de forma irrecuperable</strong>: nadie, ni siquiera el administrador del servidor, puede recuperarlos.</li>
         <li>Solo se guarda además tu preferencia de tema (día/noche) y de formato de descarga.</li>
+        <li>Las claves de cifrado de las comunicaciones no se guardan: existen solo durante cada petición.</li>
       </ul>
     </div>
 
     <div class="card" id="info-recomendaciones">
-      <h2>6. Recomendaciones de uso</h2>
+      <h2>7. Recomendaciones de uso</h2>
       <ul>
+        <li>Accede siempre por <code>https://</code> y desconfía de cualquier aviso de certificado del navegador.</li>
         <li>Descarga tu clave privada en cuanto la generes y guárdala en un lugar seguro: un gestor de secretos o un almacenamiento cifrado.</li>
         <li>Usa el cifrado <strong>AES-256</strong> con una contraseña robusta si la clave va a almacenarse o transportarse.</li>
         <li>Borra los guardados de la pestaña <strong>Guardados</strong> cuando ya no los necesites, sobre todo en equipos compartidos.</li>
@@ -379,26 +527,27 @@
     </div>
 
     <div class="card" id="info-actualizaciones">
-      <h2>7. Actualizaciones y gestión de vulnerabilidades</h2>
+      <h2>8. Actualizaciones y gestión de vulnerabilidades</h2>
       <ul>
         <li>Se realizan <strong>actualizaciones periódicas en función de las vulnerabilidades que reporta GitHub a través de
           Dependabot</strong> sobre el repositorio del proyecto.</li>
-        <li>Los componentes del sistema de los que depende la aplicación (OpenSSL y Python) proceden de los repositorios
-          oficiales de <strong>Debian 13</strong> y se mantienen al día con sus actualizaciones de seguridad.</li>
+        <li>Los componentes del sistema de los que depende la aplicación (OpenSSL, Python y su paquete criptográfico
+          <code>python3-cryptography</code>) proceden de los repositorios oficiales de <strong>Debian 13</strong> y se mantienen
+          al día con sus actualizaciones de seguridad.</li>
         <li>Cada actualización pasa una <strong>batería de tests automáticos</strong> antes de desplegarse. Si alguno falla, la
           actualización no se aplica. Si tras desplegarse el servicio no responde, se vuelve automáticamente a la versión anterior.</li>
-        <li>La aplicación no utiliza librerías de terceros: solo la biblioteca estándar de Python y el binario oficial de
-          OpenSSL. Esto reduce al mínimo la superficie expuesta a vulnerabilidades de dependencias.</li>
+        <li>La aplicación no utiliza librerías descargadas de Internet: solo la biblioteca estándar de Python y paquetes oficiales
+          de Debian en el servidor, y las funciones criptográficas integradas en el navegador. Esto reduce al mínimo la superficie expuesta a vulnerabilidades de dependencias.</li>
       </ul>
     </div>
 
     <div class="card" id="info-autoria">
-      <h2>8. Autoría</h2>
+      <h2>9. Autoría</h2>
       <p>Enca's SGEN ha sido desarrollado por <strong>Andre Lopez Araujo</strong>.</p>
     </div>
 
     <div class="card legal" id="info-legal">
-      <h2>9. Aviso legal y exención de responsabilidad</h2>
+      <h2>10. Aviso legal y exención de responsabilidad</h2>
       <p>
         Enca's SGEN se ofrece como un servicio de <strong>acceso gratuito, libre y sin coste alguno para el usuario final</strong>.
         En consecuencia:
@@ -408,7 +557,7 @@
           El servicio puede interrumpirse, modificarse o retirarse en cualquier momento y sin previo aviso.</li>
         <li><strong>No se ofrecen garantías finales en caso de ataques</strong>, intrusiones, compromisos de seguridad, vulnerabilidades
           todavía desconocidas (<em>0-day</em>), fallos de software o hardware, ni de cualquier otro incidente, aunque se apliquen
-          las medidas descritas en esta página.</li>
+          las medidas descritas en esta página, incluido el cifrado de las comunicaciones.</li>
         <li>El servicio se proporciona <strong>«tal cual» y «según disponibilidad»</strong>, sin garantías de ningún tipo, expresas
           o implícitas, incluidas las de idoneidad para un fin concreto, exactitud de los resultados o ausencia de errores.</li>
         <li>El autor <strong>no se hace responsable</strong> de daños directos o indirectos, pérdida de datos o de claves, pérdida
@@ -424,7 +573,7 @@
 
 <footer class="foot">
   <span>Enca's SGEN v{{VERSION}} · Desarrollado por Andre Lopez Araujo</span>
-  <span>El servidor no guarda ni registra claves ni CSR · Servicio gratuito sin SLA · <a href="#info" data-goto="info">Información y aviso legal</a></span>
+  <span>Comunicaciones cifradas con clave efímera por petición · El servidor no guarda ni registra claves ni CSR · Servicio gratuito sin SLA · <a href="#info" data-goto="info">Información y aviso legal</a></span>
 </footer>
 
 <template id="tpl-san">

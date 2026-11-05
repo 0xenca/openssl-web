@@ -8,6 +8,7 @@ Una web sencilla para generar peticiones de certificado SSL/TLS (**CSR**) y su *
 - **Todos los campos del certificado:** CN, O, OU, L, ST, C, email, Subject Alternative Names (DNS, IP, email, URI), Key Usage, Extended Key Usage y OCSP Must-Staple.
 - **Descargas:** solo la KEY, solo el CSR, o ambos en un `.zip`, con extensión `.csr`/`.key` o `.txt` (`nombre-csr.txt`, `nombre-key.txt`) para las plataformas que solo admiten texto.
 - **Desglose de CSR:** pega un CSR (o abre el fichero) y verás el sujeto, la clave pública, la firma, los SAN y las extensiones, con comprobaciones de buenas prácticas (firma válida, tamaño de clave, SHA-1, CN dentro de los SAN…) y la salida completa de `openssl`.
+- **Comunicaciones cifradas:** cada petición con datos se cifra con un par de claves efímero de un solo uso (ECDH P-256 + HKDF-SHA256 + AES-256-GCM), además de HTTPS. El servidor guarda la clave privada solo en memoria y la destruye al terminar.
 - **Interfaz:** limpia, con modo día y noche, adaptada a móvil y **sin dependencias externas** de CSS ni JavaScript.
 - **Información:** una pestaña que explica con detalle cómo funciona la web, qué datos trata cada operación, las garantías de no almacenamiento y sus límites, la política de actualizaciones, la autoría y el aviso legal.
 
@@ -20,6 +21,12 @@ Una web sencilla para generar peticiones de certificado SSL/TLS (**CSR**) y su *
 
 Cómo trata cada petición el servidor:
 
+- **Cifrado de extremo a extremo de la aplicación (protocolo `sgen1`, ver `app/e2e.py`):**
+  1. El navegador pide `GET /api/key`. El servidor genera un par ECDH P-256 nuevo, guarda la clave privada **solo en RAM** (identificada por un `kid` aleatorio, de un solo uso, que caduca a los 60 s) y devuelve la clave pública.
+  2. El navegador (WebCrypto, sin librerías) genera su propio par efímero y deriva con HKDF-SHA256 una clave AES-256-GCM para la petición y otra para la respuesta. El AAD liga cada mensaje a su operación.
+  3. El servidor **retira la clave privada antes de usarla**, descifra, procesa, cifra la respuesta (incluidos los errores) y destruye la clave privada y las claves derivadas.
+  4. Los `POST` sin cifrar se rechazan. Un mensaje capturado no se puede reenviar porque la clave ya no existe, y se obtiene secreto perfecto hacia adelante.
+  5. Los `GET` de la página (HTML/CSS/JS) no llevan datos y van protegidos por HTTPS. No se pueden cifrar con la capa de aplicación porque son el propio código que cifra.
 - **Generar:** `openssl` recibe la clave, la contraseña y los datos por *pipes* en memoria (stdin y descriptores de fichero), así que nunca se escriben ficheros temporales. El servidor devuelve la clave y el CSR al navegador y no se queda con nada.
 - **ZIP:** el navegador envía la clave y el CSR. El ZIP se construye en memoria (`BytesIO`) y se devuelve en esa misma respuesta. No se toca el disco.
 - **Desglose:** el CSR (que es un dato público) se analiza en memoria.
@@ -27,11 +34,11 @@ Cómo trata cada petición el servidor:
 - **Cabeceras:** todas las respuestas de la API llevan `Cache-Control: no-store`. Hay una CSP estricta (`default-src 'none'`, sin scripts inline), anti-framing y comprobación de `Origin` (anti-CSRF).
 - **Servicio aislado:** no genera volcados de memoria (`LimitCORE=0`), corre con un usuario sin privilegios y un sistema de ficheros de solo lectura (`ProtectSystem=strict`), y tiene `PrivateTmp`. La puntuación de `systemd-analyze security` es **1.5 (OK)**.
 
-> ⚠️ La clave privada viaja entre el servidor y el navegador. Si el servicio no es solo local, publícalo **siempre por HTTPS**, ya sea con un proxy inverso (nginx, Apache…) o con el HTTPS integrado (ver la configuración).
+> ⚠️ **HTTPS es obligatorio.** El navegador solo permite el cifrado WebCrypto en conexiones seguras (`https://` o `localhost`). Por `http://` desde otra máquina, la web muestra un aviso y no envía ningún dato. Publícala con un proxy inverso (nginx, Apache…) o con el HTTPS integrado (ver la configuración). HTTPS además autentica el servidor, algo que la capa de aplicación por sí sola no puede hacer.
 
 ## Actualizaciones de seguridad
 
-Se hacen actualizaciones periódicas en función de las vulnerabilidades que reporta GitHub a través de **Dependabot** (`.github/dependabot.yml`). Python y OpenSSL se actualizan con los parches de seguridad de Debian 13. El CI (`.github/workflows/tests.yml`) pasa los tests en Debian 13 en cada cambio y cada semana. Más detalles en [SECURITY.md](SECURITY.md).
+Se hacen actualizaciones periódicas en función de las vulnerabilidades que reporta GitHub a través de **Dependabot** (`.github/dependabot.yml`). Python, `python3-cryptography` y OpenSSL se actualizan con los parches de seguridad de Debian 13. El CI (`.github/workflows/tests.yml`) pasa los tests en Debian 13 en cada cambio y cada semana. Más detalles en [SECURITY.md](SECURITY.md).
 
 ## Aviso legal
 
@@ -39,7 +46,7 @@ Enca's SGEN es un servicio de acceso **gratuito, libre y sin coste** para el usu
 
 ## Requisitos
 
-Debian 13 (trixie) con `python3` y `openssl` (el instalador los instala si faltan). Solo usa la biblioteca estándar de Python, sin `pip`.
+Debian 13 (trixie) con `python3`, `python3-cryptography` y `openssl`, todos de los repositorios oficiales de Debian (el instalador los instala si faltan). No se usa `pip` ni ninguna librería descargada de Internet.
 
 ## Instalación inicial
 
@@ -51,7 +58,7 @@ sudo ./install.sh
 
 El instalador:
 
-1. Comprueba que el sistema es Debian 13 e instala `python3` y `openssl` si faltan.
+1. Comprueba que el sistema es Debian 13 e instala `python3`, `python3-cryptography` y `openssl` si faltan.
 2. Crea el usuario de sistema `opensslweb`, sin shell y sin home.
 3. Prepara la nueva versión y **ejecuta los tests** con el Python y el OpenSSL del sistema. Si fallan, no despliega nada.
 4. Copia la aplicación a **`/opt/opensslweb`**. La versión anterior queda en `/opt/opensslweb.prev`.
@@ -111,6 +118,7 @@ Cubren, entre otras cosas:
 - todas las combinaciones de clave y SHA, y el cifrado AES (se comprueba que la clave se descifra con la contraseña correcta y no con otra);
 - el formato tradicional y los caracteres especiales en el sujeto;
 - SAN y extensiones, y la validación e intentos de inyección;
+- el cifrado de las comunicaciones: ida y vuelta, uso único, caducidad, eliminación de la clave privada, manipulación, reenvío, operación equivocada, rechazo de peticiones en claro y que no viaja nada en claro;
 - el ZIP en memoria y el desglose (SHA-1, firma manipulada, cabecera `NEW CERTIFICATE REQUEST`, challenge password oculto);
 - que no se escribe ningún fichero temporal;
 - en el servidor HTTP: cabeceras de seguridad, *path traversal*, CSRF, límites de tamaño y que no se registra nada;
@@ -121,6 +129,7 @@ Cubren, entre otras cosas:
 ```
 app/server.py            Servidor HTTP (biblioteca estándar)
 app/csrtool.py           Generación, validación, ZIP y desglose de CSR
+app/e2e.py               Cifrado de las comunicaciones con claves efímeras (sgen1)
 app/openssl-req.cnf      Configuración estática mínima para openssl req
 app/static/              Interfaz (HTML + CSS + JS propios)
 deploy/opensslweb.service  Unidad systemd endurecida

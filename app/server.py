@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Servidor HTTP de Enca's SGEN.
 
-Solo usa la biblioteca estándar de Python. No registra peticiones ni datos:
+Usa la biblioteca estándar de Python y el paquete de Debian
+``python3-cryptography`` (cifrado de las comunicaciones, ver ``e2e.py``).
+No registra peticiones ni datos:
   * ``log_message`` y ``log_error`` están anulados.
   * Las claves/CSR solo existen en memoria durante la petición.
+  * Toda petición/respuesta de la API con datos va cifrada con una clave
+    efímera de un solo uso (ECDH P-256 + AES-256-GCM).
   * Las respuestas de la API llevan ``Cache-Control: no-store``.
 
 Configuración por variables de entorno (ver /etc/opensslweb/opensslweb.env):
@@ -16,6 +20,7 @@ Configuración por variables de entorno (ver /etc/opensslweb/opensslweb.env):
 
 from __future__ import annotations
 
+import base64
 import gc
 import json
 import os
@@ -30,6 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import csrtool  # noqa: E402
+import e2e  # noqa: E402
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(APP_DIR, "static")
@@ -156,13 +162,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self._json(HTTPStatus.OK, {"status": "ok", "version": VERSION})
             return
-        if path == "/api/options":
-            self._json(HTTPStatus.OK, {
-                "version": VERSION,
-                "keyTypes": list(csrtool.KEY_TYPES),
-                "digests": list(csrtool.DIGESTS),
-                "ciphers": list(csrtool.CIPHERS),
-            })
+        if path == "/api/key":
+            # Clave pública efímera para cifrar UNA petición (protocolo sgen1).
+            if not self._same_origin():
+                self._error(HTTPStatus.FORBIDDEN, "Origen no permitido")
+                return
+            self._json(HTTPStatus.OK, self.server.keys.new_key())
             return
         item = self.server.static.get(path)
         if item is None:
@@ -185,17 +190,30 @@ class Handler(BaseHTTPRequestHandler):
         if not self._same_origin():
             self._error(HTTPStatus.FORBIDDEN, "Origen no permitido")
             return
-        data = None
+        envelope = data = channel = None
         try:
-            data = self._read_json()
-            handler(data)
-        except csrtool.CsrError as exc:
+            envelope = self._read_json()
+            # Descifrado: la clave privada efímera se retira y destruye aquí.
+            data, channel = e2e.open_request(self.server.keys, envelope, path)
+            envelope = None
+            try:
+                status, result = HTTPStatus.OK, handler(data)
+            except csrtool.CsrError as exc:
+                status, result = HTTPStatus.BAD_REQUEST, {"error": str(exc)}
+            data = None
+            # La respuesta (también los errores de validación) viaja cifrada.
+            self._json(status, channel.seal(result))
+            result = None
+        except (csrtool.CsrError, e2e.E2EError) as exc:
+            # Fallo antes de poder descifrar: mensaje genérico sin datos.
             self._error(HTTPStatus.BAD_REQUEST, str(exc))
         except Exception:  # noqa: BLE001 - nunca filtrar detalles ni registrar
             self._error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
         finally:
-            # Eliminamos cualquier referencia al material recibido.
-            data = None
+            # Eliminamos cualquier referencia al material recibido y a las claves.
+            if channel is not None:
+                channel.close()
+            envelope = data = channel = None
             gc.collect(0)
 
     def _api_generate(self, data):
@@ -203,22 +221,20 @@ class Handler(BaseHTTPRequestHandler):
         if not self.server.jobs.acquire(timeout=30):
             raise csrtool.CsrError("Servidor ocupado, inténtalo de nuevo en unos segundos")
         try:
-            result = csrtool.generate(req)
+            return csrtool.generate(req)
         finally:
             self.server.jobs.release()
             req = None
-        self._json(HTTPStatus.OK, result)
 
     def _api_decode(self, data):
         if not isinstance(data, dict):
             raise csrtool.CsrError("Petición no válida")
-        self._json(HTTPStatus.OK, csrtool.decode(data.get("csr", "")))
+        return csrtool.decode(data.get("csr", ""))
 
     def _api_zip(self, data):
         filename, body = csrtool.build_zip(data)
-        self._send(HTTPStatus.OK, body, "application/zip", {
-            "Content-Disposition": f'attachment; filename="{filename}"',
-        })
+        # El nombre del fichero va dentro de la respuesta cifrada, no en cabeceras.
+        return {"filename": filename, "zip": base64.b64encode(body).decode("ascii")}
 
 
 class Server(ThreadingHTTPServer):
@@ -232,6 +248,7 @@ class Server(ThreadingHTTPServer):
         super().__init__(address, handler)
         self.static = load_static()
         self.jobs = threading.BoundedSemaphore(max_jobs)
+        self.keys = e2e.KeyStore()
         self.tls = tls_context is not None
         if tls_context is not None:
             self.socket = tls_context.wrap_socket(self.socket, server_side=True,

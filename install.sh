@@ -82,6 +82,9 @@ install_deps() {
   local missing=()
   dpkg-query -W -f='${Status}' python3 2>/dev/null | grep -q "install ok installed" || missing+=(python3)
   dpkg-query -W -f='${Status}' openssl 2>/dev/null | grep -q "install ok installed" || missing+=(openssl)
+  # Cifrado de las comunicaciones navegador <-> servidor (ECDH + AES-GCM).
+  dpkg-query -W -f='${Status}' python3-cryptography 2>/dev/null | grep -q "install ok installed" \
+    || missing+=(python3-cryptography)
   if ((${#missing[@]})); then
     info "Instalando dependencias: ${missing[*]}"
     DEBIAN_FRONTEND=noninteractive apt-get update -qq
@@ -90,7 +93,9 @@ install_deps() {
   fi
   python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
     || die "Se necesita Python >= 3.9"
-  ok "Dependencias: $(python3 --version 2>&1), $(openssl version | cut -d' ' -f1-2)"
+  python3 -I -c 'from cryptography.hazmat.primitives.ciphers.aead import AESGCM' 2>/dev/null \
+    || die "No se puede cargar python3-cryptography"
+  ok "Dependencias: $(python3 --version 2>&1), $(openssl version | cut -d' ' -f1-2), python3-cryptography $(python3 -I -c 'import cryptography; print(cryptography.__version__)')"
 }
 
 ensure_user() {

@@ -19,13 +19,14 @@ jobs:
       - name: Instalar dependencias del sistema
         run: |
           apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 openssl ca-certificates git
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends python3 python3-cryptography openssl ca-certificates git
       - uses: actions/checkout@v4
       - name: Versiones
         run: |
           cat /etc/debian_version
           python3 --version
           openssl version
+          python3 -c "import cryptography; print('cryptography', cryptography.__version__)"
       - name: Tests
         run: python3 -B -m unittest discover -s tests -t . -v
       - name: Comprobar sintaxis del instalador
