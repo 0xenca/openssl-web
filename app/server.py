@@ -11,7 +11,8 @@ No registra peticiones ni datos:
   * Las respuestas de la API llevan ``Cache-Control: no-store``.
 
 Configuración por variables de entorno (ver /etc/opensslweb/opensslweb.env):
-  OPENSSLWEB_HOST        dirección de escucha (por defecto 127.0.0.1)
+  OPENSSLWEB_HOST        dirección de escucha (por defecto "::" = todas las
+                         interfaces IPv4 e IPv6; "0.0.0.0" = todas las IPv4)
   OPENSSLWEB_PORT        puerto (por defecto 8080)
   OPENSSLWEB_TLS_CERT    certificado PEM para servir HTTPS directamente (opcional)
   OPENSSLWEB_TLS_KEY     clave PEM del certificado anterior (opcional)
@@ -21,6 +22,7 @@ Configuración por variables de entorno (ver /etc/opensslweb/opensslweb.env):
 from __future__ import annotations
 
 import base64
+import errno
 import gc
 import json
 import os
@@ -41,6 +43,7 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(APP_DIR, "static")
 VERSION_FILE = os.path.join(os.path.dirname(APP_DIR), "VERSION")
 
+DEFAULT_HOST = "::"  # todas las interfaces de red (IPv4 e IPv6)
 MAX_BODY = 128 * 1024
 REQUEST_TIMEOUT = 60
 
@@ -245,6 +248,7 @@ class Server(ThreadingHTTPServer):
     def __init__(self, address, handler, tls_context=None, max_jobs=4):
         if ":" in address[0]:
             self.address_family = socket.AF_INET6
+        self.dual_stack = address[0] == "::"
         super().__init__(address, handler)
         self.static = load_static()
         self.jobs = threading.BoundedSemaphore(max_jobs)
@@ -253,6 +257,13 @@ class Server(ThreadingHTTPServer):
         if tls_context is not None:
             self.socket = tls_context.wrap_socket(self.socket, server_side=True,
                                                   do_handshake_on_connect=False)
+
+    def server_bind(self):
+        if self.dual_stack:
+            # "::" escucha en TODAS las interfaces, IPv6 e IPv4 (IPv4 mapeada),
+            # independientemente de la configuración net.ipv6.bindv6only.
+            self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
 
     def handle_error(self, request, client_address):
         # Sin trazas: podrían contener datos de la petición.
@@ -271,7 +282,7 @@ def main():
         print(f"opensslweb: error de configuración: {msg}", file=sys.stderr, flush=True)
         sys.exit(2)
 
-    host = os.environ.get("OPENSSLWEB_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    host = os.environ.get("OPENSSLWEB_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST
     cert = os.environ.get("OPENSSLWEB_TLS_CERT", "").strip()
     key = os.environ.get("OPENSSLWEB_TLS_KEY", "").strip()
     try:
@@ -295,7 +306,14 @@ def main():
     try:
         httpd = Server((host, port), Handler, tls_context=tls_context, max_jobs=max_jobs)
     except OSError as exc:
-        fail(f"no se puede escuchar en {host}:{port} ({exc.strerror})")
+        if host != "::" or exc.errno == errno.EADDRINUSE:
+            fail(f"no se puede escuchar en {host}:{port} ({exc.strerror})")
+        # Sistema sin IPv6: todas las interfaces IPv4.
+        host = "0.0.0.0"
+        try:
+            httpd = Server((host, port), Handler, tls_context=tls_context, max_jobs=max_jobs)
+        except OSError as exc2:
+            fail(f"no se puede escuchar en {host}:{port} ({exc2.strerror})")
 
     def stop(*_):
         threading.Thread(target=httpd.shutdown, daemon=True).start()
@@ -303,7 +321,10 @@ def main():
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     scheme = "https" if tls_context else "http"
-    print(f"opensslweb {VERSION} escuchando en {scheme}://{host}:{port}", file=sys.stderr, flush=True)
+    where = {"::": "todas las interfaces (IPv4 e IPv6)", "0.0.0.0": "todas las interfaces IPv4"}.get(host, host)
+    shown = f"[{host}]" if ":" in host else host
+    print(f"opensslweb {VERSION} escuchando en {scheme}://{shown}:{port} - {where}",
+          file=sys.stderr, flush=True)
     try:
         httpd.serve_forever()
     finally:

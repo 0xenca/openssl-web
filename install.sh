@@ -15,6 +15,8 @@
 #    --no-pull      En "update", no hace git pull (solo redespliega)
 #    --force        Permite ejecutar en un sistema que no sea Debian 13
 #    --purge        En "uninstall", borra también la configuración y el usuario
+#    --self-signed-tls  Genera un certificado autofirmado y activa HTTPS si no
+#                   hay ninguno configurado
 #
 #  Tras la primera instalación también está disponible como:
 #    opensslweb-admin update | rollback | status | test | uninstall
@@ -38,6 +40,7 @@ SKIP_TESTS=0
 NO_PULL=0
 FORCE=0
 PURGE=0
+SELF_SIGNED=0
 
 SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}")
 SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
@@ -156,8 +159,52 @@ install_config() {
     ok "Configuración creada en $ENV_FILE"
   else
     install -m 0640 -o root -g "$SERVICE_USER" "$STAGE_DIR/deploy/opensslweb.env" "$ENV_FILE.dist"
+    migrate_config
     ok "Configuración existente conservada ($ENV_FILE); referencia nueva en $ENV_FILE.dist"
   fi
+  [[ $SELF_SIGNED -eq 1 ]] && setup_self_signed_tls
+  return 0
+}
+
+migrate_config() {
+  # Migraciones de configuración, una sola vez (marcadas con "config-rev").
+  if ! grep -q '^# config-rev: 2' "$ENV_FILE"; then
+    # Desde la 1.3.0 la web escucha en todas las interfaces de red. Solo se
+    # cambia si conservaba el valor por defecto anterior (127.0.0.1).
+    if grep -qE '^OPENSSLWEB_HOST=127\.0\.0\.1[[:space:]]*$' "$ENV_FILE"; then
+      sed -i -E 's/^OPENSSLWEB_HOST=127\.0\.0\.1[[:space:]]*$/OPENSSLWEB_HOST=::/' "$ENV_FILE"
+      warn "Configuración migrada: ahora escucha en TODAS las interfaces de red (OPENSSLWEB_HOST=::)"
+    fi
+    sed -i '1a # config-rev: 2' "$ENV_FILE"
+  fi
+}
+
+env_value() {
+  grep -E "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"'"'"'' || true
+}
+
+setup_self_signed_tls() {
+  local dir=$CONF_DIR/tls names="" ip
+  if [[ -n $(env_value OPENSSLWEB_TLS_CERT) ]]; then
+    ok "HTTPS ya configurado ($(env_value OPENSSLWEB_TLS_CERT)); no se genera certificado"
+    return 0
+  fi
+  install -d -m 0750 -o root -g "$SERVICE_USER" "$dir"
+  names="DNS:$(hostname -s 2>/dev/null || echo localhost),DNS:localhost"
+  if hostname -f >/dev/null 2>&1 && [[ $(hostname -f) != "$(hostname -s)" ]]; then
+    names+=",DNS:$(hostname -f)"
+  fi
+  for ip in $(hostname -I 2>/dev/null) 127.0.0.1 ::1; do names+=",IP:$ip"; done
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -sha256 -nodes -days 825 \
+    -subj "/CN=$(hostname -s 2>/dev/null || echo localhost)/O=Enca's SGEN (autofirmado)" \
+    -addext "subjectAltName=$names" -addext "extendedKeyUsage=serverAuth" \
+    -keyout "$dir/privkey.pem" -out "$dir/fullchain.pem" 2>/dev/null
+  chown root:"$SERVICE_USER" "$dir/privkey.pem" "$dir/fullchain.pem"
+  chmod 0640 "$dir/privkey.pem" "$dir/fullchain.pem"
+  sed -i -E "s|^#?OPENSSLWEB_TLS_CERT=.*|OPENSSLWEB_TLS_CERT=$dir/fullchain.pem|; s|^#?OPENSSLWEB_TLS_KEY=.*|OPENSSLWEB_TLS_KEY=$dir/privkey.pem|" "$ENV_FILE"
+  grep -q '^OPENSSLWEB_TLS_CERT=' "$ENV_FILE" || printf 'OPENSSLWEB_TLS_CERT=%s\n' "$dir/fullchain.pem" >>"$ENV_FILE"
+  grep -q '^OPENSSLWEB_TLS_KEY=' "$ENV_FILE" || printf 'OPENSSLWEB_TLS_KEY=%s\n' "$dir/privkey.pem" >>"$ENV_FILE"
+  ok "Certificado autofirmado generado en $dir (válido 825 días; sustitúyelo por uno de una CA cuando puedas)"
 }
 
 install_unit() {
@@ -193,11 +240,9 @@ try:
                 env[k.strip()] = v.strip().strip('"').strip("'")
 except OSError:
     pass
-host = env.get("OPENSSLWEB_HOST", "127.0.0.1")
-if host in ("0.0.0.0", ""):
-    host = "127.0.0.1"
-elif host == "::":
-    host = "::1"
+host = env.get("OPENSSLWEB_HOST", "::")
+if host in ("0.0.0.0", "::", ""):
+    host = "127.0.0.1"  # todas las interfaces: se comprueba por loopback IPv4
 if ":" in host:
     host = f"[{host}]"
 port = env.get("OPENSSLWEB_PORT", "8080")
@@ -260,11 +305,28 @@ do_install() {
 }
 
 print_access() {
-  local host port
-  host=$(grep -E '^OPENSSLWEB_HOST=' "$ENV_FILE" | tail -n1 | cut -d= -f2- || true)
-  port=$(grep -E '^OPENSSLWEB_PORT=' "$ENV_FILE" | tail -n1 | cut -d= -f2- || true)
+  local host port scheme=http ip
+  host=$(env_value OPENSSLWEB_HOST); host=${host:-::}
+  port=$(env_value OPENSSLWEB_PORT); port=${port:-8080}
+  [[ -n $(env_value OPENSSLWEB_TLS_CERT) ]] && scheme=https
   echo
-  echo "  Escuchando en ${host:-127.0.0.1}:${port:-8080}  (config: $ENV_FILE)"
+  case $host in
+    ::)      echo "  Escuchando en TODAS las interfaces de red (IPv4 e IPv6), puerto $port" ;;
+    0.0.0.0) echo "  Escuchando en todas las interfaces IPv4, puerto $port" ;;
+    *)       echo "  Escuchando en $host, puerto $port" ;;
+  esac
+  if [[ $host == "::" || $host == "0.0.0.0" ]]; then
+    for ip in $(hostname -I 2>/dev/null); do
+      [[ $ip == *:* && $host == 0.0.0.0 ]] && continue
+      [[ $ip == *:* ]] && ip="[$ip]"
+      echo "    $scheme://$ip:$port/"
+    done
+  fi
+  echo "  Configuración:  $ENV_FILE"
+  if [[ $scheme == http && $host != 127.0.0.1 && $host != ::1 ]]; then
+    warn "Sin HTTPS: desde otras máquinas el navegador no permitirá el cifrado y la web no funcionará."
+    warn "Configura HTTPS (proxy inverso u OPENSSLWEB_TLS_CERT/KEY) o usa: sudo opensslweb-admin install --self-signed-tls"
+  fi
   echo "  Actualizar:     sudo opensslweb-admin update"
   echo "  Volver atrás:   sudo opensslweb-admin rollback"
   echo
@@ -301,6 +363,7 @@ do_update() {
   local args=(install)
   [[ $SKIP_TESTS -eq 1 ]] && args+=(--skip-tests)
   [[ $FORCE -eq 1 ]] && args+=(--force)
+  [[ $SELF_SIGNED -eq 1 ]] && args+=(--self-signed-tls)
   exec bash "$src/install.sh" "${args[@]}"
 }
 
@@ -368,6 +431,7 @@ for arg in "$@"; do
     --no-pull) NO_PULL=1 ;;
     --force) FORCE=1 ;;
     --purge) PURGE=1 ;;
+    --self-signed-tls) SELF_SIGNED=1 ;;
     -h|--help|help) usage; exit 0 ;;
     install|update|rollback|status|test|uninstall) CMD=$arg ;;
     *) ARGS+=("$arg") ;;

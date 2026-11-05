@@ -63,7 +63,7 @@ El instalador:
 3. Prepara la nueva versión y **ejecuta los tests** con el Python y el OpenSSL del sistema. Si fallan, no despliega nada.
 4. Copia la aplicación a **`/opt/opensslweb`**. La versión anterior queda en `/opt/opensslweb.prev`.
 5. Crea `/etc/opensslweb/opensslweb.env` si no existe. Las actualizaciones nunca lo sobrescriben.
-6. Instala y habilita el servicio **`opensslweb.service`**, que arranca con la máquina, y lo reinicia.
+6. Instala y habilita el servicio **`opensslweb.service`**, que arranca con la máquina, y lo reinicia. Por defecto la web **escucha en todas las interfaces de red** (IPv4 e IPv6) en el puerto 8080, y el instalador muestra las URLs de acceso.
 7. Comprueba que responde en `/healthz`. Si no responde, **vuelve automáticamente a la versión anterior**.
 
 ## Actualizaciones y administración
@@ -84,20 +84,28 @@ Fichero: `/etc/opensslweb/opensslweb.env`. Tras cambiarlo, ejecuta `sudo systemc
 
 | Variable | Por defecto | Descripción |
 |----------|-------------|-------------|
-| `OPENSSLWEB_HOST` | `127.0.0.1` | Dirección de escucha (`0.0.0.0` para todas las interfaces IPv4, `::` para IPv4+IPv6) |
+| `OPENSSLWEB_HOST` | `::` | Dirección de escucha. `::` = **todas las interfaces de red, IPv4 e IPv6** (si el sistema no tiene IPv6, pasa automáticamente a `0.0.0.0`). `0.0.0.0` = todas las IPv4. `127.0.0.1` = solo local |
 | `OPENSSLWEB_PORT` | `8080` | Puerto (se permiten puertos < 1024, p. ej. 443) |
 | `OPENSSLWEB_TLS_CERT` | — | Certificado PEM para servir HTTPS directamente |
 | `OPENSSLWEB_TLS_KEY` | — | Clave PEM de ese certificado |
 | `OPENSSLWEB_MAX_JOBS` | `4` | Generaciones de claves simultáneas |
 
-Si usas HTTPS directo, los ficheros deben ser legibles por el grupo `opensslweb`, por ejemplo:
+La forma más rápida de tener HTTPS es pedir al instalador un certificado autofirmado. Incluye el nombre del equipo y todas sus IP, y los navegadores mostrarán un aviso la primera vez:
+
+```bash
+sudo opensslweb-admin install --self-signed-tls
+```
+
+Desde la versión 1.3.0, al actualizar una instalación que conservaba el valor por defecto anterior (`OPENSSLWEB_HOST=127.0.0.1`), este pasa a `::` (todas las interfaces). Si lo habías cambiado a otro valor, se respeta. Recuerda abrir el puerto en el cortafuegos si usas uno (el instalador no lo modifica).
+
+Si usas tu propio certificado, los ficheros deben ser legibles por el grupo `opensslweb`, por ejemplo:
 
 ```bash
 sudo install -d -m 0750 -g opensslweb /etc/opensslweb/tls
 sudo install -m 0640 -g opensslweb fullchain.pem privkey.pem /etc/opensslweb/tls/
 ```
 
-Ejemplo detrás de nginx:
+Ejemplo detrás de nginx (en ese caso pon `OPENSSLWEB_HOST=127.0.0.1` para que solo nginx llegue a la aplicación):
 
 ```nginx
 location / {

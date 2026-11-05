@@ -201,6 +201,34 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(), "")
 
 
+class ListenAllInterfacesTests(unittest.TestCase):
+    """Por defecto la web escucha en todas las interfaces de red."""
+
+    def test_default_host_is_all_interfaces(self):
+        self.assertEqual(server.DEFAULT_HOST, "::")
+        with open(os.path.join(os.path.dirname(APP), "deploy", "opensslweb.env"), encoding="utf-8") as fh:
+            self.assertIn("\nOPENSSLWEB_HOST=::\n", fh.read())
+
+    def test_dual_stack_accepts_ipv4_and_ipv6(self):
+        try:
+            httpd = server.Server(("::", 0), server.Handler)
+        except OSError:
+            self.skipTest("IPv6 no disponible en este sistema")
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            for host in ("127.0.0.1", "::1"):
+                with self.subTest(host=host):
+                    conn = http.client.HTTPConnection(host, port, timeout=10)
+                    conn.request("GET", "/healthz")
+                    self.assertEqual(conn.getresponse().status, 200)
+                    conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+
 class StaticAssetsTests(unittest.TestCase):
     """La interfaz no debe depender de CSS/JS/fuentes externos."""
 
