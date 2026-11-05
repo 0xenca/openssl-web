@@ -192,6 +192,23 @@ class ServerTests(unittest.TestCase):
         status, _, _ = self.secure("/api/decode", {"csr": "x"}, {"Origin": f"http://127.0.0.1:{self.port}"})
         self.assertEqual(status, 400)  # mismo origen: se procesa (CSR inválido)
 
+    def test_origin_behind_reverse_proxy(self):
+        """Detrás de un proxy: Host con o sin puerto por defecto debe aceptarse."""
+        cases = [
+            ("https://sslgen.ejemplo.es", "sslgen.ejemplo.es", 200),
+            ("https://sslgen.ejemplo.es", "sslgen.ejemplo.es:443", 200),
+            ("https://SSLGEN.ejemplo.es", "sslgen.ejemplo.es", 200),
+            ("https://sslgen.ejemplo.es:8443", "sslgen.ejemplo.es:8443", 200),
+            ("https://sslgen.ejemplo.es:8443", "sslgen.ejemplo.es", 403),
+            ("https://sslgen.ejemplo.es", "127.0.0.1:8080", 403),
+            ("https://malicioso.example", "sslgen.ejemplo.es", 403),
+            ("null", "sslgen.ejemplo.es", 403),
+        ]
+        for origin, host, expected in cases:
+            with self.subTest(origin=origin, host=host):
+                res, _ = self.request("GET", "/api/key", headers={"Origin": origin, "Host": host})
+                self.assertEqual(res.status, expected)
+
     def test_server_logs_nothing(self):
         self.request("GET", "/")
         self.request("GET", "/no-existe")

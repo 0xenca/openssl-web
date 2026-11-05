@@ -149,12 +149,22 @@ class Handler(BaseHTTPRequestHandler):
             del raw
 
     def _same_origin(self):
-        """Protección CSRF básica: si el navegador envía Origin, debe coincidir."""
+        """Protección CSRF: si el navegador envía Origin, debe coincidir con Host.
+
+        Se ignoran los puertos por defecto (:443 en https, :80 en http) para
+        tolerar proxies inversos que los añaden o los quitan de la cabecera Host.
+        """
         origin = self.headers.get("Origin")
         if not origin:
             return True
-        host = self.headers.get("Host", "")
-        return origin.split("://", 1)[-1] == host
+        scheme, _, origin_host = origin.partition("://")
+        default = {"https": ":443", "http": ":80"}.get(scheme.lower(), "")
+
+        def norm(value):
+            value = value.strip().lower()
+            return value[: -len(default)] if default and value.endswith(default) else value
+
+        return bool(origin_host) and norm(origin_host) == norm(self.headers.get("Host", ""))
 
     # ---- métodos HTTP ----------------------------------------------------
     def do_HEAD(self):

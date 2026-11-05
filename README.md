@@ -6,7 +6,7 @@
 
 [![Web oficial](https://img.shields.io/website?url=https%3A%2F%2Fsslgen.exala.es&label=sslgen.exala.es&up_message=online&down_message=offline&logo=googlechrome&logoColor=white)](https://sslgen.exala.es)
 [![Tests (Debian 13)](https://github.com/0xenca/openssl-web/actions/workflows/tests.yml/badge.svg)](https://github.com/0xenca/openssl-web/actions/workflows/tests.yml)
-![Versión](https://img.shields.io/badge/versión-1.3.0-2463eb)
+![Versión](https://img.shields.io/badge/versión-1.3.1-2463eb)
 ![Debian 13](https://img.shields.io/badge/Debian-13_trixie-A81D33?logo=debian&logoColor=white)
 ![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![OpenSSL 3.5](https://img.shields.io/badge/OpenSSL-3.5-721412?logo=openssl&logoColor=white)
@@ -37,6 +37,7 @@ Ni un fichero. Ni un log. Ni una clave. Ni una cookie.
 [Cómo funciona](#-el-cifrado-por-dentro) ·
 [Capturas](#-capturas) ·
 [Instalación](#-instalación-en-3-comandos) ·
+[Proxy inverso](#-obligatorio-proxy-inverso-con-https) ·
 [Configuración](#%EF%B8%8F-configuración)
 
 </div>
@@ -76,10 +77,10 @@ Ni un fichero. Ni un log. Ni una clave. Ni una cookie.
 
 - ✅ Instalador con tests, *rollback* y servicio systemd endurecido
 - ✅ Todas las interfaces, IPv4 e IPv6
-- ✅ HTTPS autofirmado en un solo paso
+- ✅ Lista para ir detrás de tu proxy inverso con HTTPS
 - ✅ Actualizaciones con un comando
 
-**[→ Instalación en 3 comandos](#-instalación-en-3-comandos)**
+**[→ Instalación en 3 comandos](#-instalación-en-3-comandos)** · **[→ Proxy inverso](#-obligatorio-proxy-inverso-con-https)**
 
 </td>
 </tr>
@@ -160,13 +161,13 @@ La mayoría de los generadores de CSR online te piden que confíes en ellos: en 
 Las capas de protección, de fuera hacia dentro:
 
 ```
- Navegador ──► HTTPS (TLS) ──► cifrado efímero sgen1 ──► validación con listas blancas
-          ──► OpenSSL por pipes en memoria ──► servicio en sandbox systemd ──► 0 bytes persistidos
+ Navegador ──► proxy inverso HTTPS ──► cifrado efímero sgen1 ──► validación con listas blancas
+           ──► OpenSSL por pipes en memoria ──► servicio en sandbox systemd ──► 0 bytes persistidos
 ```
 
 | Capa | Qué hace |
 |---|---|
-| **1. HTTPS** | Cifra todo el tráfico (GET y POST) y autentica el servidor. |
+| **1. Proxy inverso con HTTPS** | Único punto de entrada: cifra todo el tráfico (GET y POST), autentica el servidor y concentra el control de acceso. |
 | **2. Cifrado efímero `sgen1`** | ECDH P-256 + HKDF-SHA256 + AES-256-GCM con un par de claves por petición, de un solo uso y que caduca a los 60 s. Las peticiones en claro se rechazan. |
 | **3. Validación** | Listas blancas para algoritmos, DNS, IP, email, URI, longitudes y caracteres de control. Sin inyección en la configuración de OpenSSL. |
 | **4. Procesado en memoria** | La clave, la contraseña y los datos llegan a OpenSSL por stdin y descriptores de fichero anónimos. El ZIP se hace en `BytesIO`. |
@@ -260,10 +261,10 @@ cd openssl-web
 Instala:
 
 ```bash
-sudo bash install.sh --self-signed-tls
+sudo bash install.sh
 ```
 
-Listo: la web queda escuchando en **todas las interfaces de red (IPv4 e IPv6), puerto 8080, con HTTPS** y arranca sola con la máquina.
+La aplicación queda escuchando en **todas las interfaces de red (IPv4 e IPv6), puerto 8080**, y arranca sola con la máquina. Ahora falta el paso que la deja lista para publicarse: 👇 **el proxy inverso con HTTPS**.
 
 <details>
 <summary><b>Qué hace el instalador, paso a paso</b></summary>
@@ -277,9 +278,128 @@ Listo: la web queda escuchando en **todas las interfaces de red (IPv4 e IPv6), p
 7. Comprueba `/healthz`. Si no responde, **hace rollback automático** a la versión anterior.
 8. Te muestra las URLs de acceso de cada interfaz.
 
-Con `--self-signed-tls` genera un certificado autofirmado con el nombre del equipo y todas sus IP. Sin esa opción, configura tu propio certificado o un proxy inverso (ver [Configuración](#%EF%B8%8F-configuración)). Si lo copiaste desde Windows con saltos de línea CRLF, el instalador los corrige solo.
+Si lo copiaste desde Windows con saltos de línea CRLF, el instalador los corrige solo.
 
 </details>
+
+---
+
+## 🔒 Obligatorio: proxy inverso con HTTPS
+
+> [!IMPORTANT]
+> **Enca's SGEN debe publicarse siempre detrás de un proxy inverso con HTTPS** (nginx, Apache, Caddy, HAProxy, Traefik…) **que securice los accesos**. La aplicación sirve HTTP en el puerto 8080 y está pensada para que **nadie llegue a ella directamente, salvo el proxy**.
+
+**Por qué es imprescindible:**
+
+- 🔐 **HTTPS autentica el servidor y cifra la conexión.** El cifrado efímero `sgen1` protege el contenido, pero solo un certificado HTTPS válido demuestra al usuario que habla con tu servidor y no con un impostor.
+- 🌐 **Los navegadores lo exigen.** WebCrypto, que hace el cifrado `sgen1`, solo funciona en `https://`. Por `http://`, la web avisa y **no envía ningún dato**.
+- 🧱 **Un único punto de entrada.** El proxy centraliza el certificado (Let's Encrypt o el de tu organización), las versiones de TLS, HTTP/2, los límites de tamaño y cualquier control de acceso adicional (listas de IP, autenticación, WAF…).
+
+```
+ Usuarios ──HTTPS:443──► Proxy inverso (TLS) ──HTTP:8080──► Enca's SGEN
+                         └ único acceso permitido ┘
+```
+
+**Las 3 reglas del proxy:**
+
+1. **Conserva la cabecera `Host` original**, con su puerto. Las peticiones se validan comparando `Origin` con `Host` (protección anti-CSRF). Si el proxy la cambia, todas las operaciones darán **403**.
+2. **Desactiva los logs de acceso** del sitio, por coherencia con la política de no registrar nada. Aun así, si los registrara, solo vería datos cifrados por `sgen1`.
+3. **Cierra el puerto 8080 a todo el mundo salvo al proxy** (ver más abajo).
+
+<details open>
+<summary><b>nginx</b> (recomendado)</summary>
+
+```nginx
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name sslgen.ejemplo.es;
+
+    ssl_certificate     /etc/letsencrypt/live/sslgen.ejemplo.es/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/sslgen.ejemplo.es/privkey.pem;
+
+    access_log off;                       # no registrar nada
+    client_max_body_size 256k;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080; # o http://IP-DEL-SERVIDOR-SGEN:8080
+        proxy_set_header Host $http_host; # OBLIGATORIO: Host original con puerto
+        proxy_read_timeout 120s;          # RSA 4096 puede tardar unos segundos
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name sslgen.ejemplo.es;
+    return 301 https://$host$request_uri;
+}
+```
+
+> Usa `$http_host` y no `$host`: `$host` quita el puerto y fallaría si publicas en un puerto distinto del 443. Esta configuración está probada con nginx 1.26 de Debian 13.
+
+</details>
+
+<details>
+<summary><b>Apache</b></summary>
+
+Activa los módulos necesarios:
+
+```bash
+sudo a2enmod ssl proxy proxy_http
+```
+
+```apache
+<VirtualHost *:443>
+    ServerName sslgen.ejemplo.es
+
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/sslgen.ejemplo.es/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/sslgen.ejemplo.es/privkey.pem
+
+    ProxyPreserveHost On                  # OBLIGATORIO: Host original
+    ProxyPass        / http://127.0.0.1:8080/
+    ProxyPassReverse / http://127.0.0.1:8080/
+    ProxyTimeout 120
+
+    CustomLog /dev/null common            # no registrar nada
+</VirtualHost>
+```
+
+</details>
+
+<details>
+<summary><b>Caddy</b> (certificado HTTPS automático)</summary>
+
+```caddyfile
+sslgen.ejemplo.es {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Caddy obtiene el certificado solo, conserva la cabecera `Host` y no escribe logs de acceso salvo que añadas la directiva `log`.
+
+</details>
+
+### Cerrar el acceso directo al puerto 8080
+
+La aplicación escucha en todas las interfaces, así que **el puerto 8080 solo debe aceptar conexiones del proxy**:
+
+- **El proxy está en la misma máquina:** pon `OPENSSLWEB_HOST=127.0.0.1` en `/etc/opensslweb/opensslweb.env` y reinicia el servicio. Así solo el propio equipo llega a la aplicación.
+- **El proxy está en otra máquina:** deja la escucha en todas las interfaces y limita el puerto con el cortafuegos. Por ejemplo, con `ufw` y un proxy en `192.0.2.10`, primero permite el proxy:
+
+  ```bash
+  sudo ufw allow from 192.0.2.10 to any port 8080 proto tcp
+  ```
+
+  Y después bloquea al resto:
+
+  ```bash
+  sudo ufw deny 8080/tcp
+  ```
+
+  El instalador no modifica el cortafuegos.
 
 ### Actualizaciones y administración
 
@@ -291,7 +411,7 @@ sudo opensslweb-admin test        # ejecutar los tests sobre la versión instala
 sudo opensslweb-admin uninstall   # desinstalar (--purge borra también config y usuario)
 ```
 
-`update` se acuerda del repositorio de origen, hace `git pull --ff-only` como su propietario y ejecuta el instalador de la **nueva** versión. Opciones: `--no-pull`, `--skip-tests`, `--force`, `--self-signed-tls`.
+`update` se acuerda del repositorio de origen, hace `git pull --ff-only` como su propietario y ejecuta el instalador de la **nueva** versión. Opciones: `--no-pull`, `--skip-tests`, `--force`.
 
 ---
 
@@ -305,19 +425,16 @@ sudo systemctl restart opensslweb
 
 | Variable | Por defecto | Descripción |
 |---|---|---|
-| `OPENSSLWEB_HOST` | `::` | `::` = **todas las interfaces, IPv4 e IPv6** (sin IPv6, pasa sola a `0.0.0.0`). `0.0.0.0` = todas las IPv4. `127.0.0.1` = solo local |
-| `OPENSSLWEB_PORT` | `8080` | Puerto (se admiten puertos < 1024, p. ej. 443) |
-| `OPENSSLWEB_TLS_CERT` | — | Certificado PEM para servir HTTPS directamente |
-| `OPENSSLWEB_TLS_KEY` | — | Clave PEM de ese certificado |
+| `OPENSSLWEB_HOST` | `::` | `::` = **todas las interfaces, IPv4 e IPv6** (sin IPv6, pasa sola a `0.0.0.0`). `0.0.0.0` = todas las IPv4. `127.0.0.1` = solo local (proxy en la misma máquina) |
+| `OPENSSLWEB_PORT` | `8080` | Puerto en el que el proxy inverso contacta con la aplicación |
+| `OPENSSLWEB_TLS_CERT` | — | *(Opcional)* Certificado PEM para cifrar también el tramo proxy → aplicación |
+| `OPENSSLWEB_TLS_KEY` | — | *(Opcional)* Clave PEM de ese certificado |
 | `OPENSSLWEB_MAX_JOBS` | `4` | Generaciones de claves simultáneas |
 
-> [!IMPORTANT]
-> **HTTPS es obligatorio** para usar la web desde otra máquina. Los navegadores solo permiten el cifrado WebCrypto en `https://` (o en `localhost`). Por `http://`, la web avisa y **no envía ningún dato**.
-
 <details>
-<summary><b>Usar tu propio certificado</b></summary>
+<summary><b>Cifrar también el tramo proxy → aplicación (opcional)</b></summary>
 
-Crea el directorio para los certificados:
+Si el proxy está en otra máquina y quieres que ese tramo también vaya por TLS, la aplicación puede servir HTTPS directamente. Crea el directorio para los certificados:
 
 ```bash
 sudo install -d -m 0750 -g opensslweb /etc/opensslweb/tls
@@ -329,26 +446,11 @@ Copia en él el certificado y su clave:
 sudo install -m 0640 -g opensslweb fullchain.pem privkey.pem /etc/opensslweb/tls/
 ```
 
-Después apunta a ellos `OPENSSLWEB_TLS_CERT` y `OPENSSLWEB_TLS_KEY`.
+Después configura `OPENSSLWEB_TLS_CERT` y `OPENSSLWEB_TLS_KEY`, y en el proxy usa `https://IP-DEL-SERVIDOR-SGEN:8080` como destino. Aun así, el acceso de los usuarios debe seguir pasando por el proxy inverso. Para entornos de prueba, el instalador también puede generar un certificado autofirmado con `--self-signed-tls`.
+
 </details>
 
-<details>
-<summary><b>Detrás de nginx</b></summary>
-
-Pon `OPENSSLWEB_HOST=127.0.0.1` para que solo nginx llegue a la aplicación:
-
-```nginx
-location / {
-    proxy_pass http://127.0.0.1:8080;
-    proxy_set_header Host $host;
-    access_log off;            # coherente con la política de no registrar nada
-}
-```
-
-Aunque nginx registrara los cuerpos de las peticiones, solo vería datos cifrados por la capa `sgen1`.
-</details>
-
-Desde la 1.3.0, las instalaciones que conservaban el antiguo `OPENSSLWEB_HOST=127.0.0.1` pasan a `::` al actualizar. Los valores personalizados se respetan. El cortafuegos no se toca.
+Desde la 1.3.0, las instalaciones que conservaban el antiguo `OPENSSLWEB_HOST=127.0.0.1` pasan a `::` al actualizar. Los valores personalizados se respetan.
 
 ---
 
@@ -358,7 +460,7 @@ Desde la 1.3.0, las instalaciones que conservaban el antiguo `OPENSSLWEB_HOST=12
 python3 -B -m unittest discover -s tests -t .
 ```
 
-**56 tests** en Debian 13, en el CI y en tu servidor antes de cada despliegue. Comprueban, entre otras cosas:
+**57 tests** en Debian 13, en el CI y en tu servidor antes de cada despliegue. Comprueban, entre otras cosas:
 
 - 🔑 Todas las combinaciones de clave y SHA, y el cifrado AES (la clave se descifra con la contraseña correcta y con ninguna otra).
 - 🔐 El protocolo de cifrado: ida y vuelta, uso único, caducidad, liberación de la clave privada, manipulación, reenvío, operación equivocada, rechazo de peticiones en claro y **que no viaja ni un byte en claro**.

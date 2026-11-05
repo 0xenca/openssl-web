@@ -329,8 +329,9 @@ print_access() {
   fi
   echo "  Configuración:  $ENV_FILE"
   if [[ $scheme == http && $host != 127.0.0.1 && $host != ::1 ]]; then
-    warn "Sin HTTPS: desde otras máquinas el navegador no permitirá el cifrado y la web no funcionará."
-    warn "Configura HTTPS (proxy inverso u OPENSSLWEB_TLS_CERT/KEY) o usa: sudo opensslweb-admin install --self-signed-tls"
+    warn "Publica la web SIEMPRE detrás de un proxy inverso con HTTPS (nginx, Apache, Caddy…):"
+    warn "sin HTTPS el navegador no permite el cifrado y la web no funcionará desde otras máquinas."
+    warn "Limita además el puerto $port para que solo el proxy pueda conectarse (ver README)."
   fi
   echo "  Actualizar:     sudo opensslweb-admin update"
   echo "  Volver atrás:   sudo opensslweb-admin rollback"
