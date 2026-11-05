@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+if [ -n "${BASH_VERSION:-}" ] && grep -q $'\r' "${BASH_SOURCE[0]}" 2>/dev/null; then sed -i 's/\r$//' "${BASH_SOURCE[0]}" && echo "install.sh: convertidos los saltos de línea de Windows (CRLF) a Unix (LF)" >&2 && exec bash "${BASH_SOURCE[0]}" "$@"; fi # (esta línea debe seguir siendo la 2.ª y terminar en "#")
 # =============================================================================
 #  Enca's SGEN (opensslweb) — instalador / actualizador para Debian 13 (trixie)
 #
@@ -55,7 +56,7 @@ ok()   { printf '%s ✓ %s %s\n' "$C_OK" "$C_0" "$*"; }
 warn() { printf '%s ! %s %s\n' "$C_WARN" "$C_0" "$*" >&2; }
 die()  { printf '%s ✗ %s %s\n' "$C_ERR" "$C_0" "$*" >&2; exit 1; }
 
-usage() { sed -n '3,22p' "$SCRIPT_PATH" | sed 's/^#  \{0,1\}//'; }
+usage() { sed -n '4,23p' "$SCRIPT_PATH" | sed 's/^#  \{0,1\}//'; }
 
 # -----------------------------------------------------------------------------
 # Comprobaciones
@@ -126,6 +127,10 @@ stage() {
     cp -a "$src/$item" "$STAGE_DIR/"
   done
   find "$STAGE_DIR" -name '__pycache__' -type d -prune -exec rm -rf {} +
+  # Saltos de línea Unix en todo lo desplegado (por si la copia viene de Windows).
+  find "$STAGE_DIR" -type f -exec grep -lI $'\r' {} + 2>/dev/null | while IFS= read -r f; do
+    sed -i 's/\r$//' "$f"
+  done || true
   chown -R root:root "$STAGE_DIR"
   find "$STAGE_DIR" -type d -exec chmod 0755 {} +
   find "$STAGE_DIR" -type f -exec chmod 0644 {} +

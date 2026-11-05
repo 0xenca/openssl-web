@@ -229,6 +229,27 @@ class ListenAllInterfacesTests(unittest.TestCase):
             httpd.server_close()
 
 
+class LineEndingsTests(unittest.TestCase):
+    """bash, systemd y Debian necesitan saltos de línea Unix (LF)."""
+
+    def test_no_crlf(self):
+        root = os.path.dirname(APP)
+        for base, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in (".git", "__pycache__")]
+            for name in files:
+                path = os.path.join(base, name)
+                with open(path, "rb") as fh:
+                    data = fh.read()
+                with self.subTest(file=os.path.relpath(path, root)):
+                    self.assertNotIn(b"\r\n", data)
+
+    def test_installer_self_heals_crlf(self):
+        with open(os.path.join(os.path.dirname(APP), "install.sh"), encoding="utf-8") as fh:
+            second = fh.read().splitlines()[1]
+        self.assertIn("sed -i 's/\\r$//'", second)
+        self.assertTrue(second.split("#")[-1].strip().endswith('"#")'))
+
+
 class StaticAssetsTests(unittest.TestCase):
     """La interfaz no debe depender de CSS/JS/fuentes externos."""
 
