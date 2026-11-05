@@ -247,7 +247,8 @@ class LineEndingsTests(unittest.TestCase):
         with open(os.path.join(os.path.dirname(APP), "install.sh"), encoding="utf-8") as fh:
             second = fh.read().splitlines()[1]
         self.assertIn("sed -i 's/\\r$//'", second)
-        self.assertTrue(second.split("#")[-1].strip().endswith('"#")'))
+        # El "\r" de una copia con CRLF debe caer dentro de un comentario.
+        self.assertIn("; fi #", second)
 
 
 class StaticAssetsTests(unittest.TestCase):
