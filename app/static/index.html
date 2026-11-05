@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>OpenSSL Web · Generador de CSR</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="app.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.6 8 11 4.6-1.4 8-6 8-11V5l-8-3Zm0 6a2.5 2.5 0 0 1 1 4.8V16h-2v-3.2A2.5 2.5 0 0 1 12 8Z"/></svg>
+    <span>OpenSSL Web</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button role="tab" class="tab" data-tab="generate" aria-selected="true">Generar</button>
+    <button role="tab" class="tab" data-tab="decode" aria-selected="false">Decodificar</button>
+    <button role="tab" class="tab" data-tab="saved" aria-selected="false">Guardados <span class="badge" id="saved-count">0</span></button>
+  </nav>
+  <button class="icon-btn" id="theme-toggle" type="button" title="Cambiar tema" aria-label="Cambiar tema">
+    <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1"/></svg>
+    <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z"/></svg>
+  </button>
+</header>
+
+<main>
+  <!-- ============================ GENERAR ============================ -->
+  <section id="tab-generate" class="panel" role="tabpanel">
+    <form id="gen-form" novalidate autocomplete="off">
+      <div class="card">
+        <h2>Algoritmos</h2>
+        <div class="grid">
+          <label>Tipo de clave
+            <select name="keyType">
+              <option value="rsa2048" selected>RSA 2048 bits</option>
+              <option value="rsa3072">RSA 3072 bits</option>
+              <option value="rsa4096">RSA 4096 bits</option>
+              <option value="ecp256">ECDSA P-256</option>
+              <option value="ecp384">ECDSA P-384</option>
+              <option value="ecp521">ECDSA P-521</option>
+            </select>
+          </label>
+          <label>Algoritmo de firma (SHA)
+            <select name="digest">
+              <option value="sha256" selected>SHA-256</option>
+              <option value="sha384">SHA-384</option>
+              <option value="sha512">SHA-512</option>
+            </select>
+          </label>
+          <label>Cifrado de la clave privada (AES)
+            <select name="cipher">
+              <option value="none" selected>Sin cifrar</option>
+              <option value="aes128">AES-128-CBC</option>
+              <option value="aes192">AES-192-CBC</option>
+              <option value="aes256">AES-256-CBC</option>
+            </select>
+          </label>
+          <label>Formato de la clave
+            <select name="keyFormat">
+              <option value="pkcs8" selected>PKCS#8 (BEGIN PRIVATE KEY)</option>
+              <option value="traditional">Tradicional (BEGIN RSA/EC PRIVATE KEY)</option>
+            </select>
+          </label>
+        </div>
+        <div class="grid" id="pass-row" hidden>
+          <label>Contraseña de la clave
+            <input type="password" name="passphrase" minlength="4" maxlength="1023" autocomplete="new-password">
+          </label>
+          <label>Repite la contraseña
+            <input type="password" name="passphrase2" minlength="4" maxlength="1023" autocomplete="new-password">
+          </label>
+          <p class="hint full">La contraseña se usa una sola vez para cifrar la clave y no se guarda en ningún sitio. Si la pierdes, la clave no podrá usarse.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Sujeto (Distinguished Name)</h2>
+        <div class="grid">
+          <label class="full"><span>Common Name (CN) <span class="req">*</span></span>
+            <input name="CN" required maxlength="64" placeholder="www.ejemplo.com o *.ejemplo.com" spellcheck="false">
+          </label>
+          <label>Organización (O)
+            <input name="O" maxlength="64" placeholder="Ejemplo S.L.">
+          </label>
+          <label>Unidad organizativa (OU)
+            <input name="OU" maxlength="64" placeholder="Sistemas">
+          </label>
+          <label>Localidad (L)
+            <input name="L" maxlength="128" placeholder="Madrid">
+          </label>
+          <label>Provincia / Estado (ST)
+            <input name="ST" maxlength="128" placeholder="Madrid">
+          </label>
+          <label>País (C)
+            <input name="C" maxlength="2" placeholder="ES" class="upper" spellcheck="false">
+          </label>
+          <label>Correo electrónico
+            <input name="emailAddress" type="email" maxlength="128" placeholder="admin@ejemplo.com" spellcheck="false">
+          </label>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Subject Alternative Names (SAN)</h2>
+        <label class="check"><input type="checkbox" name="cnInSan" checked> Incluir automáticamente el CN como SAN</label>
+        <div id="san-list" class="san-list"></div>
+        <div class="row">
+          <button type="button" class="btn ghost" id="san-add">+ Añadir SAN</button>
+          <span class="hint">Consejo: pega varios nombres separados por comas, espacios o saltos de línea en un campo.</span>
+        </div>
+      </div>
+
+      <details class="card">
+        <summary><h2>Extensiones avanzadas</h2></summary>
+        <div class="grid">
+          <fieldset>
+            <legend>Key Usage</legend>
+            <label class="check"><input type="checkbox" name="ku" value="digitalSignature" checked> digitalSignature</label>
+            <label class="check"><input type="checkbox" name="ku" value="keyEncipherment" checked> keyEncipherment <small>(solo RSA)</small></label>
+            <label class="check"><input type="checkbox" name="ku" value="nonRepudiation"> nonRepudiation</label>
+            <label class="check"><input type="checkbox" name="ku" value="dataEncipherment"> dataEncipherment</label>
+            <label class="check"><input type="checkbox" name="ku" value="keyAgreement"> keyAgreement</label>
+            <label class="check sep"><input type="checkbox" name="kuCritical" checked> Marcar Key Usage como crítica</label>
+          </fieldset>
+          <fieldset>
+            <legend>Extended Key Usage</legend>
+            <label class="check"><input type="checkbox" name="eku" value="serverAuth" checked> serverAuth (servidor TLS)</label>
+            <label class="check"><input type="checkbox" name="eku" value="clientAuth"> clientAuth (cliente TLS)</label>
+            <label class="check"><input type="checkbox" name="eku" value="codeSigning"> codeSigning</label>
+            <label class="check"><input type="checkbox" name="eku" value="emailProtection"> emailProtection</label>
+            <label class="check"><input type="checkbox" name="eku" value="timeStamping"> timeStamping</label>
+            <label class="check sep"><input type="checkbox" name="mustStaple"> OCSP Must-Staple</label>
+          </fieldset>
+        </div>
+      </details>
+
+      <div class="actions">
+        <button type="submit" class="btn primary" id="gen-btn">Generar CSR y clave</button>
+        <button type="reset" class="btn ghost">Limpiar</button>
+      </div>
+      <p class="msg" id="gen-msg" role="status"></p>
+    </form>
+
+    <div id="gen-result" class="card result" hidden>
+      <div class="result-head">
+        <h2>Resultado: <span id="res-name"></span></h2>
+        <span class="pill ok">Guardado solo en este navegador</span>
+      </div>
+      <div class="download-bar" id="res-downloads"></div>
+      <div class="grid two">
+        <div>
+          <div class="pem-head"><h3>CSR</h3><button type="button" class="btn small ghost" data-copy="res-csr">Copiar</button></div>
+          <textarea id="res-csr" class="pem" readonly spellcheck="false"></textarea>
+        </div>
+        <div>
+          <div class="pem-head"><h3>Clave privada</h3><button type="button" class="btn small ghost" data-copy="res-key">Copiar</button></div>
+          <textarea id="res-key" class="pem" readonly spellcheck="false"></textarea>
+        </div>
+      </div>
+      <div class="actions"><button type="button" class="btn ghost" id="res-decode">Ver desglose del CSR</button></div>
+    </div>
+  </section>
+
+  <!-- ============================ DECODIFICAR ============================ -->
+  <section id="tab-decode" class="panel" role="tabpanel" hidden>
+    <div class="card">
+      <h2>Desglose y validación de CSR</h2>
+      <p class="hint">Pega un CSR en formato PEM (<code>-----BEGIN CERTIFICATE REQUEST-----</code>). Nunca pegues aquí una clave privada.</p>
+      <textarea id="dec-input" class="pem tall" spellcheck="false" placeholder="-----BEGIN CERTIFICATE REQUEST-----&#10;...&#10;-----END CERTIFICATE REQUEST-----"></textarea>
+      <div class="actions">
+        <button type="button" class="btn primary" id="dec-btn">Decodificar</button>
+        <button type="button" class="btn ghost" id="dec-clear">Limpiar</button>
+        <label class="btn ghost file-btn">Abrir archivo…<input type="file" id="dec-file" accept=".csr,.pem,.txt,.req"></label>
+      </div>
+      <p class="msg" id="dec-msg" role="status"></p>
+    </div>
+    <div id="dec-result" hidden></div>
+  </section>
+
+  <!-- ============================ GUARDADOS ============================ -->
+  <section id="tab-saved" class="panel" role="tabpanel" hidden>
+    <div class="card">
+      <div class="result-head">
+        <h2>Peticiones guardadas en este navegador</h2>
+        <button type="button" class="btn small danger" id="saved-clear">Borrar todo</button>
+      </div>
+      <p class="hint">Se almacenan únicamente en el almacenamiento local de este navegador (no en el servidor). Si borras los datos del navegador se perderán: descarga y guarda tus claves en lugar seguro.</p>
+      <div class="format-row">
+        <span>Formato de descarga:</span>
+        <label class="check"><input type="radio" name="fmt-saved" value="pem" data-format="1" checked> .csr / .key</label>
+        <label class="check"><input type="radio" name="fmt-saved" value="txt" data-format="1"> .txt</label>
+      </div>
+      <div id="saved-list" class="saved-list"></div>
+      <p class="empty" id="saved-empty">No hay peticiones guardadas.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>OpenSSL Web v{{VERSION}}</span>
+  <span>El servidor no guarda ni registra claves ni CSR.</span>
+</footer>
+
+<template id="tpl-san">
+  <div class="san-row">
+    <select class="san-type" aria-label="Tipo de SAN">
+      <option value="DNS">DNS</option>
+      <option value="IP">IP</option>
+      <option value="email">Email</option>
+      <option value="URI">URI</option>
+    </select>
+    <input class="san-value" placeholder="ejemplo.com" spellcheck="false" aria-label="Valor del SAN">
+    <button type="button" class="icon-btn small san-del" title="Quitar" aria-label="Quitar SAN">&times;</button>
+  </div>
+</template>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
