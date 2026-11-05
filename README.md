@@ -1,111 +1,294 @@
-# Enca's SGEN
+<div align="center">
 
-**Desarrollado por Andre Lopez Araujo.**
+<img src="docs/banner.svg" alt="Enca's SGEN: generador de CSR y claves privadas que no se queda con nada" width="100%">
 
-Una web sencilla para generar peticiones de certificado SSL/TLS (**CSR**) y su **clave privada**, y para desglosar y validar CSR existentes.
+<br>
 
-- **Algoritmos a elegir:** RSA 2048/3072/4096 o ECDSA P-256/P-384/P-521, firma **SHA-256/384/512** y cifrado opcional de la clave con **AES-128/192/256** (PKCS#8 o formato tradicional).
-- **Todos los campos del certificado:** CN, O, OU, L, ST, C, email, Subject Alternative Names (DNS, IP, email, URI), Key Usage, Extended Key Usage y OCSP Must-Staple.
-- **Descargas:** solo la KEY, solo el CSR, o ambos en un `.zip`, con extensión `.csr`/`.key` o `.txt` (`nombre-csr.txt`, `nombre-key.txt`) para las plataformas que solo admiten texto.
-- **Desglose de CSR:** pega un CSR (o abre el fichero) y verás el sujeto, la clave pública, la firma, los SAN y las extensiones, con comprobaciones de buenas prácticas (firma válida, tamaño de clave, SHA-1, CN dentro de los SAN…) y la salida completa de `openssl`.
-- **Comunicaciones cifradas:** cada petición con datos se cifra con un par de claves efímero de un solo uso (ECDH P-256 + HKDF-SHA256 + AES-256-GCM), además de HTTPS. El servidor guarda la clave privada solo en memoria y la destruye al terminar.
-- **Interfaz:** limpia, con modo día y noche, adaptada a móvil y **sin dependencias externas** de CSS ni JavaScript.
-- **Información:** una pestaña que explica con detalle cómo funciona la web, qué datos trata cada operación, las garantías de no almacenamiento y sus límites, la política de actualizaciones, la autoría y el aviso legal.
+[![Tests (Debian 13)](https://github.com/0xenca/openssl-web/actions/workflows/tests.yml/badge.svg)](https://github.com/0xenca/openssl-web/actions/workflows/tests.yml)
+![Versión](https://img.shields.io/badge/versión-1.3.0-2463eb)
+![Debian 13](https://img.shields.io/badge/Debian-13_trixie-A81D33?logo=debian&logoColor=white)
+![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
+![OpenSSL 3.5](https://img.shields.io/badge/OpenSSL-3.5-721412?logo=openssl&logoColor=white)
+![Dependabot](https://img.shields.io/badge/Dependabot-activo-025E8C?logo=dependabot&logoColor=white)
 
-## Privacidad: qué guarda el servidor y qué no
+![Cifrado](https://img.shields.io/badge/cifrado-ECDH_P--256_·_HKDF_·_AES--256--GCM-5b8cff)
+![Claves efímeras](https://img.shields.io/badge/clave_privada_del_servidor-1_por_petición-5b8cff)
+![Almacenamiento](https://img.shields.io/badge/almacenamiento_en_servidor-0_bytes-18794e)
+![Logs](https://img.shields.io/badge/logs-ninguno-18794e)
+![Dependencias](https://img.shields.io/badge/dependencias_JS%2FCSS-0-18794e)
+![systemd](https://img.shields.io/badge/systemd--analyze_security-1.5_OK-18794e)
 
-| Dónde | Qué se guarda |
-|-------|---------------|
-| **Navegador del usuario** | Los CSR y las claves generadas, en `localStorage` (pestaña *Guardados*). Se pueden borrar de una en una o todas a la vez. |
-| **Servidor** | **Nada.** Ni ficheros, ni logs, ni registros de operaciones. |
+**Genera tu CSR y tu clave privada con la tranquilidad de que el servidor no se queda con nada.**
+<br>
+Ni un fichero. Ni un log. Ni una clave. Ni una cookie.
 
-Cómo trata cada petición el servidor:
+[Características](#-características) ·
+[Seguridad](#%EF%B8%8F-seguridad-en-profundidad) ·
+[Cómo funciona](#-el-cifrado-por-dentro) ·
+[Capturas](#-capturas) ·
+[Instalación](#-instalación-en-3-comandos) ·
+[Configuración](#%EF%B8%8F-configuración)
 
-- **Cifrado de extremo a extremo de la aplicación (protocolo `sgen1`, ver `app/e2e.py`):**
-  1. El navegador pide `GET /api/key`. El servidor genera un par ECDH P-256 nuevo, guarda la clave privada **solo en RAM** (identificada por un `kid` aleatorio, de un solo uso, que caduca a los 60 s) y devuelve la clave pública.
-  2. El navegador (WebCrypto, sin librerías) genera su propio par efímero y deriva con HKDF-SHA256 una clave AES-256-GCM para la petición y otra para la respuesta. El AAD liga cada mensaje a su operación.
-  3. El servidor **retira la clave privada antes de usarla**, descifra, procesa, cifra la respuesta (incluidos los errores) y destruye la clave privada y las claves derivadas.
-  4. Los `POST` sin cifrar se rechazan. Un mensaje capturado no se puede reenviar porque la clave ya no existe, y se obtiene secreto perfecto hacia adelante.
-  5. Los `GET` de la página (HTML/CSS/JS) no llevan datos y van protegidos por HTTPS. No se pueden cifrar con la capa de aplicación porque son el propio código que cifra.
-- **Generar:** `openssl` recibe la clave, la contraseña y los datos por *pipes* en memoria (stdin y descriptores de fichero), así que nunca se escriben ficheros temporales. El servidor devuelve la clave y el CSR al navegador y no se queda con nada.
-- **ZIP:** el navegador envía la clave y el CSR. El ZIP se construye en memoria (`BytesIO`) y se devuelve en esa misma respuesta. No se toca el disco.
-- **Desglose:** el CSR (que es un dato público) se analiza en memoria.
-- **Sin logs:** el registro de peticiones de `http.server` está desactivado y las trazas de error se suprimen. El journal de systemd solo recibe la línea de arranque.
-- **Cabeceras:** todas las respuestas de la API llevan `Cache-Control: no-store`. Hay una CSP estricta (`default-src 'none'`, sin scripts inline), anti-framing y comprobación de `Origin` (anti-CSRF).
-- **Servicio aislado:** no genera volcados de memoria (`LimitCORE=0`), corre con un usuario sin privilegios y un sistema de ficheros de solo lectura (`ProtectSystem=strict`), y tiene `PrivateTmp`. La puntuación de `systemd-analyze security` es **1.5 (OK)**.
+</div>
 
-> ⚠️ **HTTPS es obligatorio.** El navegador solo permite el cifrado WebCrypto en conexiones seguras (`https://` o `localhost`). Por `http://` desde otra máquina, la web muestra un aviso y no envía ningún dato. Publícala con un proxy inverso (nginx, Apache…) o con el HTTPS integrado (ver la configuración). HTTPS además autentica el servidor, algo que la capa de aplicación por sí sola no puede hacer.
+<br>
 
-## Actualizaciones de seguridad
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/generar-dark.png">
+  <img alt="Formulario de generación de CSR de Enca's SGEN" src="docs/screenshots/generar-light.png">
+</picture>
 
-Se hacen actualizaciones periódicas en función de las vulnerabilidades que reporta GitHub a través de **Dependabot** (`.github/dependabot.yml`). Python, `python3-cryptography` y OpenSSL se actualizan con los parches de seguridad de Debian 13. El CI (`.github/workflows/tests.yml`) pasa los tests en Debian 13 en cada cambio y cada semana. Más detalles en [SECURITY.md](SECURITY.md).
+---
 
-## Aviso legal
+## ✨ Por qué Enca's SGEN
 
-Enca's SGEN es un servicio de acceso **gratuito, libre y sin coste** para el usuario final. **No se garantiza ningún SLA** ni se ofrecen garantías finales en caso de ataques, intrusiones u otros incidentes. Se proporciona «tal cual», sin garantías de ningún tipo. El texto completo está en el apartado «Información» de la web.
+La mayoría de los generadores de CSR online te piden que confíes en ellos: en sus logs, en sus ficheros temporales, en su proxy, en su analítica. **Enca's SGEN está diseñado para que no tengas que hacerlo.** Cada decisión de diseño responde a una misma pregunta: *¿y si alguien mira lo que pasa por aquí?*
 
-## Requisitos
+- 🔐 **Doble cifrado de extremo a extremo.** HTTPS y, además, un cifrado propio de la aplicación con un par de claves **nuevo en cada petición**. El servidor guarda su clave privada **solo en RAM** y **la destruye** al terminar.
+- 🧾 **Cero almacenamiento.** OpenSSL trabaja por *pipes* en memoria, el ZIP se construye en RAM y el servicio corre sobre un sistema de ficheros **de solo lectura**. No es que no queramos guardar nada: es que **no puede**.
+- 🙈 **Cero logs.** Ni IPs, ni dominios, ni contenidos. El registro de peticiones está desactivado por código, y hay tests que lo comprueban.
+- 🧩 **Cero dependencias externas.** HTML, CSS y JS escritos a mano. El cifrado del navegador usa WebCrypto, que viene integrado. En el servidor, solo la biblioteca estándar de Python y paquetes oficiales de Debian.
+- 🛡️ **Servicio blindado.** systemd con `ProtectSystem=strict`, sin volcados de memoria, llamadas al sistema filtradas y usuario sin privilegios: **1.5 «OK»** en `systemd-analyze security`.
+- 🧪 **Probado en cada cambio.** Una batería de tests, entre ellos los ataques contra el propio protocolo, se ejecuta en Debian 13 en el CI y **otra vez en tu servidor antes de cada despliegue**.
 
-Debian 13 (trixie) con `python3`, `python3-cryptography` y `openssl`, todos de los repositorios oficiales de Debian (el instalador los instala si faltan). No se usa `pip` ni ninguna librería descargada de Internet.
+### La lista que debería cumplir cualquier herramienta que toca claves privadas
 
-## Instalación inicial
+| Requisito | Enca's SGEN |
+|---|:---:|
+| La clave privada no se guarda en el servidor, ni en disco ni en logs | ✅ |
+| Sin ficheros temporales (ni en `/tmp`) | ✅ |
+| Datos cifrados en tránsito, incluso frente a proxies e inspección TLS | ✅ |
+| Una clave de cifrado distinta en cada petición, destruida al terminar | ✅ |
+| Secreto perfecto hacia adelante y protección contra reenvíos | ✅ |
+| Sin cookies, sin cuentas, sin analítica, sin CDN | ✅ |
+| CSP estricta, anti-CSRF y anti-clickjacking | ✅ |
+| Servicio con sistema de ficheros de solo lectura y sin volcados de memoria | ✅ |
+| Tests automáticos que verifican todo lo anterior | ✅ |
+| Transparencia: documenta también lo que **no** puede garantizar | ✅ |
+
+---
+
+## 🚀 Características
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**🔑 Generación**
+- RSA 2048 / 3072 / 4096 y ECDSA P-256 / P-384 / P-521
+- Firma **SHA-256 / 384 / 512**
+- Clave cifrada con **AES-128 / 192 / 256** (opcional)
+- PKCS#8 o formato tradicional (`BEGIN RSA/EC PRIVATE KEY`)
+- CN, O, OU, L, ST, C, email
+- SAN: DNS (incl. wildcard), IP v4/v6, email, URI (pegar varios a la vez)
+- Key Usage, Extended Key Usage y OCSP Must-Staple
+
+</td>
+<td width="50%" valign="top">
+
+**📦 Descargas y gestión**
+- Solo la KEY, solo el CSR o **ambos en .zip**
+- Extensión `.csr` / `.key` o **`.txt`** para plataformas que solo admiten texto
+- Peticiones **guardadas solo en tu navegador**
+- Modo **día / noche** y diseño adaptado a móvil
+
+**🔍 Desglose y validación**
+- Sujeto, clave pública, firma, SAN y extensiones
+- Verificación de firma y avisos de buenas prácticas
+- Salida completa de `openssl`
+
+</td>
+</tr>
+</table>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/resultado-dark.png">
+  <img alt="Resultado: CSR y clave privada con opciones de descarga" src="docs/screenshots/resultado-light.png">
+</picture>
+
+---
+
+## 🛡️ Seguridad en profundidad
+
+Las capas de protección, de fuera hacia dentro:
+
+```
+ Navegador ──► HTTPS (TLS) ──► cifrado efímero sgen1 ──► validación con listas blancas
+          ──► OpenSSL por pipes en memoria ──► servicio en sandbox systemd ──► 0 bytes persistidos
+```
+
+| Capa | Qué hace |
+|---|---|
+| **1. HTTPS** | Cifra todo el tráfico (GET y POST) y autentica el servidor. |
+| **2. Cifrado efímero `sgen1`** | ECDH P-256 + HKDF-SHA256 + AES-256-GCM con un par de claves por petición, de un solo uso y que caduca a los 60 s. Las peticiones en claro se rechazan. |
+| **3. Validación** | Listas blancas para algoritmos, DNS, IP, email, URI, longitudes y caracteres de control. Sin inyección en la configuración de OpenSSL. |
+| **4. Procesado en memoria** | La clave, la contraseña y los datos llegan a OpenSSL por stdin y descriptores de fichero anónimos. El ZIP se hace en `BytesIO`. |
+| **5. Sin rastro** | Sin logs, sin `core dumps`, `Cache-Control: no-store`, sin cookies y CSP `default-src 'none'`. |
+| **6. Sandbox** | `ProtectSystem=strict`, `PrivateTmp`, `NoNewPrivileges`, `SystemCallFilter`, `ProtectProc=invisible`, usuario dedicado… |
+| **7. Ciclo de vida** | Dependabot, actualizaciones de seguridad de Debian, tests antes de cada despliegue y *rollback* automático. |
+
+### Qué se queda dónde
+
+| | Navegador del usuario | Servidor |
+|---|---|---|
+| CSR y clave privada | ✅ `localStorage`, bajo tu control | ❌ **Nunca** |
+| Contraseña AES | ❌ Se borra del formulario tras usarla | ❌ **Nunca** |
+| Claves de cifrado de la sesión | ❌ No exportables, se descartan | ⏱️ Solo en RAM, hasta usarlas (máx. 60 s) |
+| Logs / IPs / cookies | ❌ | ❌ **Nunca** |
+
+---
+
+## 🔬 El cifrado por dentro
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant N as 🌐 Navegador (WebCrypto)
+    participant S as 🖥️ Servidor (RAM)
+    N->>S: GET /api/key
+    Note right of S: Genera un par ECDH P-256 NUEVO<br/>y guarda la privada solo en RAM (TTL 60 s)
+    S-->>N: { kid, clave pública }
+    Note left of N: Par ECDH efímero propio<br/>ECDH → HKDF-SHA256 → 2 claves AES-256-GCM
+    N->>S: POST /api/… { kid, epk, iv, ct }  (todo cifrado)
+    Note right of S: Retira la clave privada (uso único)<br/>descifra → OpenSSL en memoria → cifra la respuesta
+    S-->>N: { iv, ct }  (respuesta cifrada)
+    Note right of S: 🔥 Clave privada y claves derivadas destruidas
+    Note left of N: Descifra y guarda solo en el navegador
+```
+
+- **Una clave por petición:** nada se reutiliza.
+- **Secreto perfecto hacia adelante:** el tráfico grabado hoy no se podrá descifrar mañana.
+- **Contra reenvíos:** un mensaje capturado no sirve, porque su clave ya no existe.
+- **Ligado a la operación (AAD):** un mensaje para «desglosar» no sirve para «generar».
+- **Autenticado:** AES-GCM detecta cualquier alteración.
+
+El protocolo completo está en [`app/e2e.py`](app/e2e.py), y explicado para el usuario en la pestaña **Información** de la web, que incluye la **política de tratamiento de datos**.
+
+---
+
+## 📸 Capturas
+
+<table>
+<tr>
+<td width="50%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/desglose-dark.png">
+  <img alt="Desglose y validación de un CSR" src="docs/screenshots/desglose-light.png">
+</picture>
+<p align="center"><b>Desglose y validación de CSR</b></p>
+</td>
+<td width="50%">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/cifrado-dark.png">
+  <img alt="Pestaña Información: cifrado de las comunicaciones" src="docs/screenshots/cifrado-light.png">
+</picture>
+<p align="center"><b>Transparencia total en la pestaña Información</b></p>
+</td>
+</tr>
+</table>
+
+<p align="center">
+  <img alt="Enca's SGEN en el móvil (modo noche)" src="docs/screenshots/movil-dark.png" width="280">
+  <br><b>Móvil y modo noche</b>
+</p>
+
+---
+
+## 📦 Instalación en 3 comandos
+
+> Solo para **Debian 13 (trixie)**. El instalador pone lo que falte (`python3`, `python3-cryptography`, `openssl`), siempre desde los repositorios oficiales de Debian. Nada de `pip`, `npm` ni descargas de terceros.
+
+Clona el repositorio:
 
 ```bash
 git clone https://github.com/0xenca/openssl-web.git
-cd openssl-web
-sudo ./install.sh
 ```
 
-El instalador:
-
-1. Comprueba que el sistema es Debian 13 e instala `python3`, `python3-cryptography` y `openssl` si faltan.
-2. Crea el usuario de sistema `opensslweb`, sin shell y sin home.
-3. Prepara la nueva versión y **ejecuta los tests** con el Python y el OpenSSL del sistema. Si fallan, no despliega nada.
-4. Copia la aplicación a **`/opt/opensslweb`**. La versión anterior queda en `/opt/opensslweb.prev`.
-5. Crea `/etc/opensslweb/opensslweb.env` si no existe. Las actualizaciones nunca lo sobrescriben.
-6. Instala y habilita el servicio **`opensslweb.service`**, que arranca con la máquina, y lo reinicia. Por defecto la web **escucha en todas las interfaces de red** (IPv4 e IPv6) en el puerto 8080, y el instalador muestra las URLs de acceso.
-7. Comprueba que responde en `/healthz`. Si no responde, **vuelve automáticamente a la versión anterior**.
-
-## Actualizaciones y administración
+Entra en el directorio:
 
 ```bash
-sudo opensslweb-admin update      # git pull del repositorio + tests + redespliegue
-sudo opensslweb-admin rollback    # volver a la versión anterior
-sudo opensslweb-admin status      # versión instalada, estado del servicio y healthz
-sudo opensslweb-admin test        # ejecutar los tests sobre la versión instalada
-sudo opensslweb-admin uninstall   # desinstalar (añade --purge para borrar config y usuario)
+cd openssl-web
 ```
 
-`update` se acuerda del repositorio desde el que se instaló y hace `git pull --ff-only` como el propietario de ese directorio. Después ejecuta el instalador de la **nueva** versión. Equivale a ejecutar `sudo ./install.sh update` desde el repositorio. Opciones: `--no-pull`, `--skip-tests`, `--force`.
+Instala:
 
-## Configuración
+```bash
+sudo bash install.sh --self-signed-tls
+```
 
-Fichero: `/etc/opensslweb/opensslweb.env`. Tras cambiarlo, ejecuta `sudo systemctl restart opensslweb`.
+Listo: la web queda escuchando en **todas las interfaces de red (IPv4 e IPv6), puerto 8080, con HTTPS** y arranca sola con la máquina.
+
+<details>
+<summary><b>Qué hace el instalador, paso a paso</b></summary>
+
+1. Comprueba que el sistema es Debian 13 e instala las dependencias que falten.
+2. Crea el usuario de sistema `opensslweb`, sin shell y sin home.
+3. Prepara la versión y **ejecuta todos los tests** con el Python y el OpenSSL del sistema. Si alguno falla, **no despliega nada**.
+4. Copia la aplicación a **`/opt/opensslweb`** y deja la versión anterior en `/opt/opensslweb.prev`.
+5. Crea `/etc/opensslweb/opensslweb.env`. Las actualizaciones nunca lo sobrescriben.
+6. Instala y habilita **`opensslweb.service`**, endurecido con sandbox de systemd.
+7. Comprueba `/healthz`. Si no responde, **hace rollback automático** a la versión anterior.
+8. Te muestra las URLs de acceso de cada interfaz.
+
+Con `--self-signed-tls` genera un certificado autofirmado con el nombre del equipo y todas sus IP. Sin esa opción, configura tu propio certificado o un proxy inverso (ver [Configuración](#%EF%B8%8F-configuración)). Si lo copiaste desde Windows con saltos de línea CRLF, el instalador los corrige solo.
+
+</details>
+
+### Actualizaciones y administración
+
+```bash
+sudo opensslweb-admin update      # git pull + tests + despliegue (con rollback si falla)
+sudo opensslweb-admin rollback    # volver a la versión anterior
+sudo opensslweb-admin status      # versión, estado del servicio y healthz
+sudo opensslweb-admin test        # ejecutar los tests sobre la versión instalada
+sudo opensslweb-admin uninstall   # desinstalar (--purge borra también config y usuario)
+```
+
+`update` se acuerda del repositorio de origen, hace `git pull --ff-only` como su propietario y ejecuta el instalador de la **nueva** versión. Opciones: `--no-pull`, `--skip-tests`, `--force`, `--self-signed-tls`.
+
+---
+
+## ⚙️ Configuración
+
+Fichero: `/etc/opensslweb/opensslweb.env`. Después de cambiarlo, aplica los cambios con:
+
+```bash
+sudo systemctl restart opensslweb
+```
 
 | Variable | Por defecto | Descripción |
-|----------|-------------|-------------|
-| `OPENSSLWEB_HOST` | `::` | Dirección de escucha. `::` = **todas las interfaces de red, IPv4 e IPv6** (si el sistema no tiene IPv6, pasa automáticamente a `0.0.0.0`). `0.0.0.0` = todas las IPv4. `127.0.0.1` = solo local |
-| `OPENSSLWEB_PORT` | `8080` | Puerto (se permiten puertos < 1024, p. ej. 443) |
+|---|---|---|
+| `OPENSSLWEB_HOST` | `::` | `::` = **todas las interfaces, IPv4 e IPv6** (sin IPv6, pasa sola a `0.0.0.0`). `0.0.0.0` = todas las IPv4. `127.0.0.1` = solo local |
+| `OPENSSLWEB_PORT` | `8080` | Puerto (se admiten puertos < 1024, p. ej. 443) |
 | `OPENSSLWEB_TLS_CERT` | — | Certificado PEM para servir HTTPS directamente |
 | `OPENSSLWEB_TLS_KEY` | — | Clave PEM de ese certificado |
 | `OPENSSLWEB_MAX_JOBS` | `4` | Generaciones de claves simultáneas |
 
-La forma más rápida de tener HTTPS es pedir al instalador un certificado autofirmado. Incluye el nombre del equipo y todas sus IP, y los navegadores mostrarán un aviso la primera vez:
+> [!IMPORTANT]
+> **HTTPS es obligatorio** para usar la web desde otra máquina. Los navegadores solo permiten el cifrado WebCrypto en `https://` (o en `localhost`). Por `http://`, la web avisa y **no envía ningún dato**.
 
-```bash
-sudo opensslweb-admin install --self-signed-tls
-```
+<details>
+<summary><b>Usar tu propio certificado</b></summary>
 
-Desde la versión 1.3.0, al actualizar una instalación que conservaba el valor por defecto anterior (`OPENSSLWEB_HOST=127.0.0.1`), este pasa a `::` (todas las interfaces). Si lo habías cambiado a otro valor, se respeta. Recuerda abrir el puerto en el cortafuegos si usas uno (el instalador no lo modifica).
-
-Si usas tu propio certificado, los ficheros deben ser legibles por el grupo `opensslweb`, por ejemplo:
+Crea el directorio para los certificados:
 
 ```bash
 sudo install -d -m 0750 -g opensslweb /etc/opensslweb/tls
+```
+
+Copia en él el certificado y su clave:
+
+```bash
 sudo install -m 0640 -g opensslweb fullchain.pem privkey.pem /etc/opensslweb/tls/
 ```
 
-Ejemplo detrás de nginx (en ese caso pon `OPENSSLWEB_HOST=127.0.0.1` para que solo nginx llegue a la aplicación):
+Después apunta a ellos `OPENSSLWEB_TLS_CERT` y `OPENSSLWEB_TLS_KEY`.
+</details>
+
+<details>
+<summary><b>Detrás de nginx</b></summary>
+
+Pon `OPENSSLWEB_HOST=127.0.0.1` para que solo nginx llegue a la aplicación:
 
 ```nginx
 location / {
@@ -115,35 +298,69 @@ location / {
 }
 ```
 
-## Tests
+Aunque nginx registrara los cuerpos de las peticiones, solo vería datos cifrados por la capa `sgen1`.
+</details>
+
+Desde la 1.3.0, las instalaciones que conservaban el antiguo `OPENSSLWEB_HOST=127.0.0.1` pasan a `::` al actualizar. Los valores personalizados se respetan. El cortafuegos no se toca.
+
+---
+
+## 🧪 Calidad
 
 ```bash
 python3 -B -m unittest discover -s tests -t .
 ```
 
-Cubren, entre otras cosas:
+**56 tests** en Debian 13, en el CI y en tu servidor antes de cada despliegue. Comprueban, entre otras cosas:
 
-- todas las combinaciones de clave y SHA, y el cifrado AES (se comprueba que la clave se descifra con la contraseña correcta y no con otra);
-- el formato tradicional y los caracteres especiales en el sujeto;
-- SAN y extensiones, y la validación e intentos de inyección;
-- el cifrado de las comunicaciones: ida y vuelta, uso único, caducidad, eliminación de la clave privada, manipulación, reenvío, operación equivocada, rechazo de peticiones en claro y que no viaja nada en claro;
-- el ZIP en memoria y el desglose (SHA-1, firma manipulada, cabecera `NEW CERTIFICATE REQUEST`, challenge password oculto);
-- que no se escribe ningún fichero temporal;
-- en el servidor HTTP: cabeceras de seguridad, *path traversal*, CSRF, límites de tamaño y que no se registra nada;
-- que la interfaz no tiene dependencias externas ni código inline.
+- 🔑 Todas las combinaciones de clave y SHA, y el cifrado AES (la clave se descifra con la contraseña correcta y con ninguna otra).
+- 🔐 El protocolo de cifrado: ida y vuelta, uso único, caducidad, liberación de la clave privada, manipulación, reenvío, operación equivocada, rechazo de peticiones en claro y **que no viaja ni un byte en claro**.
+- 💾 Que **no se escribe ningún fichero temporal**.
+- 🙈 Que el servidor **no registra nada**.
+- 🧱 Cabeceras de seguridad, *path traversal*, CSRF, límites de tamaño e intentos de inyección.
+- 🧩 Que la interfaz no tiene dependencias externas ni código inline.
+- 🌐 Escucha en todas las interfaces (IPv4/IPv6) y saltos de línea Unix en todo el repositorio.
 
-## Estructura
+**Actualizaciones de seguridad:** Dependabot vigila el repositorio; Python, `python3-cryptography` y OpenSSL reciben los parches de seguridad de Debian. Más detalles en [SECURITY.md](SECURITY.md).
+
+---
+
+## 🔎 Transparencia
+
+Un buen sistema de seguridad también dice lo que **no** puede hacer. Enca's SGEN lo documenta en su pestaña **Información**:
+
+- La clave se genera en el servidor: la identidad del servidor la garantiza su certificado HTTPS.
+- El código de la web lo entrega el propio servidor (como en cualquier aplicación web).
+- Durante la petición, los datos se procesan descifrados en la RAM del servidor.
+- Python no permite garantizar la sobrescritura inmediata de cada copia en memoria (las claves efímeras sí las sobrescribe OpenSSL).
+- El `localStorage` del navegador no lo cifra la web.
+
+Para claves de máxima criticidad (CA, firma de código, banca…), lo recomendable sigue siendo generarlas en tu propia infraestructura o en un HSM.
+
+---
+
+## 🗂️ Estructura
 
 ```
-app/server.py            Servidor HTTP (biblioteca estándar)
-app/csrtool.py           Generación, validación, ZIP y desglose de CSR
-app/e2e.py               Cifrado de las comunicaciones con claves efímeras (sgen1)
-app/openssl-req.cnf      Configuración estática mínima para openssl req
-app/static/              Interfaz (HTML + CSS + JS propios)
+app/server.py              Servidor HTTP (biblioteca estándar)
+app/e2e.py                 Cifrado de las comunicaciones con claves efímeras (sgen1)
+app/csrtool.py             Generación, validación, ZIP y desglose de CSR
+app/openssl-req.cnf        Configuración estática mínima para openssl req
+app/static/                Interfaz (HTML + CSS + JS propios)
 deploy/opensslweb.service  Unidad systemd endurecida
 deploy/opensslweb.env      Configuración por defecto
-install.sh               Instalador / actualizador
-tests/                   Tests (unittest)
-.github/                 Dependabot y CI (tests en Debian 13)
-VERSION                  Versión desplegada
+install.sh                 Instalador / actualizador
+tests/                     Tests (unittest)
+docs/                      Banner y capturas
+.github/                   Dependabot y CI (tests en Debian 13)
 ```
+
+---
+
+<div align="center">
+
+**Enca's SGEN** · Desarrollado por **Andre Lopez Araujo**
+
+<sub>Servicio de acceso gratuito, libre y sin coste para el usuario final. Se proporciona «tal cual»: <b>no se garantiza ningún SLA</b> ni se ofrecen garantías finales en caso de ataques, intrusiones u otros incidentes. El aviso legal completo está en la pestaña «Información» de la web.</sub>
+
+</div>

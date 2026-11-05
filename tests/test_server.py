@@ -240,6 +240,8 @@ class LineEndingsTests(unittest.TestCase):
                 path = os.path.join(base, name)
                 with open(path, "rb") as fh:
                     data = fh.read()
+                if b"\0" in data:  # binarios (capturas PNG…)
+                    continue
                 with self.subTest(file=os.path.relpath(path, root)):
                     self.assertNotIn(b"\r\n", data)
 
