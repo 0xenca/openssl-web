@@ -64,3 +64,39 @@ def e2e_open(res_key, path, envelope):
     plain = AESGCM(res_key).decrypt(base64.b64decode(envelope["iv"]), base64.b64decode(envelope["ct"]),
                                     f"sgen1|res|{path}".encode())
     return _json.loads(plain)
+
+
+def make_ca_chain(csr_pem, days=90, leaf_days=None):
+    """CA de prueba (raíz -> intermedia) que firma el CSR. Devuelve PEM (hoja, intermedia, raíz)."""
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    def name(cn):
+        return x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)])
+
+    def build(subject, issuer, public_key, signer, ca, valid_days, extensions=()):
+        b = (x509.CertificateBuilder().subject_name(subject).issuer_name(issuer).public_key(public_key)
+             .serial_number(x509.random_serial_number())
+             .not_valid_before(now - datetime.timedelta(days=1))
+             .not_valid_after(now + datetime.timedelta(days=valid_days))
+             .add_extension(x509.BasicConstraints(ca=ca, path_length=None), critical=True))
+        for ext in extensions:
+            b = b.add_extension(ext, critical=False)
+        return b.sign(signer, hashes.SHA256())
+
+    root_key = ec.generate_private_key(ec.SECP256R1())
+    inter_key = ec.generate_private_key(ec.SECP256R1())
+    root = build(name("Raiz de prueba"), name("Raiz de prueba"), root_key.public_key(), root_key, True, 3650)
+    inter = build(name("Intermedia de prueba"), root.subject, inter_key.public_key(), root_key, True, 1825)
+    csr = x509.load_pem_x509_csr(csr_pem.encode())
+    sans = [e.value for e in csr.extensions if isinstance(e.value, x509.SubjectAlternativeName)]
+    leaf = build(csr.subject, inter.subject, csr.public_key(), inter_key, False,
+                 days if leaf_days is None else leaf_days, sans)
+    pem = lambda c: c.public_bytes(serialization.Encoding.PEM).decode()  # noqa: E731
+    return pem(leaf), pem(inter), pem(root)

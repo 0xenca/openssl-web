@@ -20,6 +20,10 @@ sudo opensslweb-admin update               # nueva versión de la aplicación
 
 Además de HTTPS, cada petición con datos se cifra con un par de claves ECDH P-256 efímero (HKDF-SHA256 + AES-256-GCM). El servidor guarda la clave privada solo en memoria, la usa una única vez y la destruye al terminar la petición, o a los 60 s si no se usa. Los detalles están en `app/e2e.py` y en el apartado «Información» de la web.
 
+## Creación de PFX
+
+Los PFX se construyen en memoria dentro del proceso (`app/pfxtool.py`, con `python3-cryptography`): sin ficheros temporales, sin subprocesos y sin contraseñas en la línea de comandos. La clave, los certificados, las contraseñas y el PFX resultante viajan cifrados con `sgen1`. El navegador no guarda ni el PFX ni sus contraseñas.
+
 ## Notificar una vulnerabilidad
 
 Usa la opción **«Report a vulnerability»** de la pestaña *Security* del repositorio en GitHub (aviso privado), en lugar de abrir una incidencia pública.

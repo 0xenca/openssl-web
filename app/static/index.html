@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="referrer" content="no-referrer">
-<title>Enca's SGEN · Generador de CSR y claves</title>
-<meta name="description" content="Enca's SGEN: generador de peticiones de certificado (CSR) y claves privadas. Sin almacenamiento en el servidor.">
+<title>Enca's SGEN · Generador de CSR, claves y PFX</title>
+<meta name="description" content="Enca's SGEN: generador de peticiones de certificado (CSR), claves privadas y ficheros PFX / PKCS#12. Sin almacenamiento en el servidor.">
 <meta name="author" content="Andre Lopez Araujo">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="app.css">
@@ -21,6 +21,7 @@
   <nav class="tabs" role="tablist">
     <button role="tab" class="tab" data-tab="generate" aria-selected="true">Generar</button>
     <button role="tab" class="tab" data-tab="decode" aria-selected="false">Decodificar</button>
+    <button role="tab" class="tab" data-tab="pfx" aria-selected="false"><span class="lbl-long">Crear PFX</span><span class="lbl-short">PFX</span></button>
     <button role="tab" class="tab" data-tab="saved" aria-selected="false">Guardados <span class="badge" id="saved-count">0</span></button>
     <button role="tab" class="tab" data-tab="info" aria-selected="false"><span class="lbl-long">Información</span><span class="lbl-short">Info</span></button>
   </nav>
@@ -33,10 +34,22 @@
 <main>
   <div class="card warn-banner" id="e2e-warning" role="alert" hidden>
     <strong>Conexión no segura.</strong> Esta web cifra todas sus comunicaciones con claves efímeras y para ello
-    el navegador exige acceder por <code>https://</code>. Mientras accedas por HTTP no podrás generar, comprimir ni desglosar.
+    el navegador exige acceder por <code>https://</code>. Mientras accedas por HTTP no podrás generar, comprimir, desglosar ni crear PFX.
   </div>
   <!-- ============================ GENERAR ============================ -->
   <section id="tab-generate" class="panel" role="tabpanel">
+    <div class="card flow-card">
+      <div class="result-head">
+        <h2>¿Qué necesitas hacer?</h2>
+        <a href="#pfx" class="btn small ghost" data-goto="pfx">Ya tengo clave y certificado: crear PFX →</a>
+      </div>
+      <ol class="flow">
+        <li class="current"><b>Genera el CSR y la clave</b><span>Rellena este formulario. La clave privada se queda en tu navegador.</span></li>
+        <li class=""><b>Envía el CSR a tu CA</b><span>Copia o descarga el <code>.csr</code> y entrégalo a tu autoridad de certificación. Nunca envíes la clave.</span></li>
+        <li class=""><b>Recibe el certificado</b><span>La CA te devuelve el certificado (<code>.crt</code>/<code>.cer</code>/<code>.pem</code>) y, normalmente, los intermedios.</span></li>
+        <li class=""><b>Crea el PFX</b><span>En <a href="#pfx" data-goto="pfx">Crear PFX</a> une clave, certificado y cadena en un <code>.pfx</code> protegido con contraseña.</span></li>
+      </ol>
+    </div>
     <form id="gen-form" novalidate autocomplete="off">
       <div class="card">
         <h2>Algoritmos</h2>
@@ -168,7 +181,12 @@
           <textarea id="res-key" class="pem" readonly spellcheck="false"></textarea>
         </div>
       </div>
-      <div class="actions"><button type="button" class="btn ghost" id="res-decode">Ver desglose del CSR</button></div>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="res-decode">Ver desglose del CSR</button>
+        <button type="button" class="btn ghost" id="res-pfx">Crear PFX con esta clave</button>
+      </div>
+      <p class="hint next-step"><strong>Siguiente paso:</strong> envía el CSR (no la clave) a tu autoridad de certificación.
+        Cuando te devuelva el certificado, pulsa «Crear PFX con esta clave» o búscala en <a href="#saved" data-goto="saved">Guardados</a>.</p>
     </div>
   </section>
 
@@ -186,6 +204,137 @@
       <p class="msg" id="dec-msg" role="status"></p>
     </div>
     <div id="dec-result" hidden></div>
+  </section>
+
+  <!-- ============================ CREAR PFX ============================ -->
+  <section id="tab-pfx" class="panel" role="tabpanel" hidden>
+    <div class="card intro">
+      <h2>Crear un PFX / PKCS#12</h2>
+      <p class="hint">Un <strong>PFX</strong> (también <code>.p12</code>) es un único fichero protegido con contraseña que contiene la
+        <strong>clave privada</strong>, el <strong>certificado</strong> que te emitió la CA y su <strong>cadena de intermedios</strong>.
+        Lo piden Windows/IIS, Exchange, Azure, AWS, Java/Tomcat, Fortinet y muchos otros. Puedes usar una clave guardada en este navegador
+        o subir tu propia clave y certificado. Todo viaja cifrado con una clave efímera y el servidor no guarda nada: ni la clave, ni el certificado, ni el PFX, ni las contraseñas.</p>
+    </div>
+
+    <form id="pfx-form" novalidate autocomplete="off">
+      <div class="card">
+        <h2><span class="step-num">1</span> Clave privada</h2>
+        <div class="segmented" role="radiogroup" aria-label="Origen de la clave">
+          <label><input type="radio" name="keySource" value="saved" checked> Una petición guardada en este navegador</label>
+          <label><input type="radio" name="keySource" value="own"> Subir o pegar mi propia clave</label>
+        </div>
+        <div id="pfx-saved-box">
+          <label>Petición guardada
+            <select id="pfx-entry"></select>
+          </label>
+          <p class="hint" id="pfx-entry-info"></p>
+          <p class="hint" id="pfx-no-saved" hidden>No tienes peticiones guardadas en este navegador. <a href="#generate" data-goto="generate">Genera un CSR</a> o elige «Subir o pegar mi propia clave».</p>
+        </div>
+        <div id="pfx-own-box" hidden>
+          <div class="pem-head"><h3>Clave privada (PEM o DER)</h3>
+            <label class="btn small ghost file-btn">Abrir archivo…<input type="file" id="pfx-key-file" accept=".key,.pem,.txt,.der,.p8,.pk8"></label>
+          </div>
+          <textarea id="pfx-key" class="pem" spellcheck="false" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"></textarea>
+          <p class="hint">Se admiten PKCS#8, PKCS#8 cifrada y el formato tradicional RSA/EC (también cifrado), en PEM o DER. La clave no se guarda en ningún sitio.</p>
+        </div>
+        <div class="grid" id="pfx-keypass-row" hidden>
+          <label>Contraseña de la clave privada
+            <input type="password" id="pfx-keypass" maxlength="1023" autocomplete="off">
+          </label>
+          <p class="hint full" id="pfx-keypass-hint">Esta clave está cifrada: indica la contraseña con la que la protegiste. Solo se usa para abrirla.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span class="step-num">2</span> Certificado emitido por la CA</h2>
+        <div class="pem-head"><h3>Certificado (PEM, DER o fullchain)</h3>
+          <label class="btn small ghost file-btn">Abrir archivo…<input type="file" id="pfx-cert-file" accept=".crt,.cer,.pem,.der,.txt"></label>
+        </div>
+        <textarea id="pfx-cert" class="pem" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"></textarea>
+        <p class="hint">Es el fichero que te envió la CA para tu CSR (no el CSR). Si recibiste un <code>fullchain.pem</code> o un
+          bundle con varios certificados, pégalo entero: el certificado de tu clave se identifica automáticamente y el resto se usa como cadena.</p>
+      </div>
+
+      <div class="card">
+        <h2><span class="step-num">3</span> Cadena de certificados intermedios <small class="optional">(recomendado)</small></h2>
+        <div class="pem-head"><h3>Intermedios (PEM, DER o PKCS#7 .p7b)</h3>
+          <label class="btn small ghost file-btn">Añadir archivos…<input type="file" id="pfx-chain-file" accept=".crt,.cer,.pem,.der,.txt,.p7b,.p7c,.ca-bundle" multiple></label>
+        </div>
+        <textarea id="pfx-chain" class="pem" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----&#10;(intermedio)&#10;-----END CERTIFICATE-----"></textarea>
+        <p class="hint">Suele llamarse <code>intermediate.crt</code>, <code>chain.pem</code>, <code>ca-bundle</code> o <code>.p7b</code>. Se ordena
+          automáticamente desde el emisor de tu certificado hacia la raíz, se eliminan duplicados y se descartan los certificados que no pertenecen a la cadena.</p>
+      </div>
+
+      <div class="card">
+        <h2><span class="step-num">4</span> Opciones del PFX</h2>
+        <div class="grid">
+          <label><span>Contraseña del PFX <span class="req">*</span></span>
+            <input type="password" id="pfx-pass" minlength="4" maxlength="1023" autocomplete="new-password">
+          </label>
+          <label>Repite la contraseña
+            <input type="password" id="pfx-pass2" minlength="4" maxlength="1023" autocomplete="new-password">
+          </label>
+          <div class="pass-tools full">
+            <button type="button" class="btn small ghost" id="pfx-genpass">Generar contraseña segura</button>
+            <label class="check"><input type="checkbox" id="pfx-showpass"> Mostrar contraseñas</label>
+            <button type="button" class="btn small ghost" id="pfx-copypass">Copiar contraseña</button>
+          </div>
+          <label>Compatibilidad
+            <select id="pfx-profile">
+              <option value="modern" selected>Moderno: AES-256 + SHA-256 (recomendado)</option>
+              <option value="legacy">Compatible: 3DES + SHA-1 (sistemas antiguos)</option>
+            </select>
+          </label>
+          <label>Nombre descriptivo (friendly name)
+            <input id="pfx-friendly" maxlength="64" placeholder="Por defecto, el CN del certificado" spellcheck="false">
+          </label>
+          <fieldset class="full">
+            <legend>Contenido y descarga</legend>
+            <label class="check"><input type="checkbox" id="pfx-include-chain" checked> Incluir la cadena de intermedios en el PFX</label>
+            <label class="check" id="pfx-remember-row"><input type="checkbox" id="pfx-remember" checked> Recordar el certificado y la cadena junto a la petición guardada (son públicos; la contraseña del PFX nunca se guarda)</label>
+            <div class="format-row">
+              <span>Extensión:</span>
+              <label class="check"><input type="radio" name="pfxExt" value="pfx" checked> .pfx</label>
+              <label class="check"><input type="radio" name="pfxExt" value="p12"> .p12</label>
+            </div>
+          </fieldset>
+        </div>
+        <details class="help">
+          <summary>¿Qué compatibilidad elijo?</summary>
+          <ul>
+            <li><strong>Moderno (AES-256-CBC, PBKDF2-SHA256, MAC SHA-256):</strong> Windows 10 (1709+) y 11, Windows Server 2019 o posterior,
+              Azure, AWS, OpenSSL 1.1.1/3.x, Java 8u301+ y 11+, nginx, Apache, HAProxy, Tomcat. Es la opción segura por defecto.</li>
+            <li><strong>Compatible (3DES, MAC SHA-1):</strong> solo si el sistema de destino rechaza el PFX moderno con un error de
+              contraseña o de formato: Windows Server 2016 o anterior, Windows 7/8, macOS antiguos, Java 8 antiguo, Android antiguo, algunos
+              equipos de red y appliances. Es más débil: usa una contraseña larga y no reutilices el fichero más de lo necesario.</li>
+          </ul>
+        </details>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn primary" id="pfx-btn">Crear PFX</button>
+        <button type="button" class="btn ghost" id="pfx-reset">Limpiar</button>
+      </div>
+      <p class="msg" id="pfx-msg" role="status"></p>
+    </form>
+
+    <div id="pfx-result" hidden></div>
+
+    <details class="card help-card">
+      <summary><h2>Cómo usar el PFX</h2></summary>
+      <ul class="help-list">
+        <li><strong>Windows / IIS:</strong> doble clic en el <code>.pfx</code> (o <em>Certificados del equipo › Personal › Importar</em>),
+          introduce la contraseña y, en IIS, asígnalo en <em>Enlaces del sitio › https</em>.</li>
+        <li><strong>Azure / AWS / Cloudflare y otros paneles:</strong> sube el <code>.pfx</code> e indica la contraseña.</li>
+        <li><strong>Java / Tomcat:</strong> úsalo directamente como almacén <code>PKCS12</code> (<code>keystoreType="PKCS12"</code>) o conviértelo con
+          <code>keytool -importkeystore -srckeystore certificado.pfx -srcstoretype PKCS12 -destkeystore almacen.jks</code>.</li>
+        <li><strong>Comprobarlo en tu equipo:</strong> <code>openssl pkcs12 -in certificado.pfx -info -noout</code>
+          (con OpenSSL 3 y el perfil compatible, añade <code>-legacy</code> si lo pide).</li>
+        <li><strong>Extraer de nuevo clave y certificado:</strong> <code>openssl pkcs12 -in certificado.pfx -nocerts -out clave.key</code> y
+          <code>openssl pkcs12 -in certificado.pfx -clcerts -nokeys -out certificado.crt</code>.</li>
+        <li><strong>Envía la contraseña por un canal distinto</strong> al del fichero (por ejemplo, el PFX por correo y la contraseña por teléfono o un gestor de secretos).</li>
+      </ul>
+    </details>
   </section>
 
   <!-- ============================ GUARDADOS ============================ -->
@@ -212,7 +361,8 @@
       <h2>Enca's SGEN: cómo funciona, cifrado y política de tratamiento de datos</h2>
       <p>
         <strong>Enca's SGEN</strong> es una herramienta web para generar <strong>peticiones de firma de certificado (CSR)</strong>
-        y sus <strong>claves privadas</strong>, y para desglosar y validar CSR existentes. Está pensada para que la
+        y sus <strong>claves privadas</strong>, para desglosar y validar CSR existentes y para crear ficheros
+        <strong>PFX / PKCS#12</strong> a partir de tus claves guardadas o de tu propia clave y certificado. Está pensada para que la
         clave privada y el CSR <strong>vivan únicamente en tu navegador</strong>. El servidor solo interviene
         durante los instantes imprescindibles para ejecutar OpenSSL y no conserva nada.
       </p>
@@ -292,6 +442,26 @@
         Aun así, el servidor tampoco lo almacena. Si por error pegas una clave privada en ese cuadro, <strong>el navegador se
         niega a enviarla</strong>. Si el CSR coincide con uno de tus guardados, la web te lo indica comparándolo localmente, sin enviar tus guardados a ningún sitio.
       </p>
+
+      <h3>1.5 Creación de un PFX / PKCS#12</h3>
+      <ol class="steps">
+        <li><strong>Eliges la clave privada:</strong> una de las peticiones guardadas en tu navegador o tu propia clave (pegada o
+          subida desde un fichero PEM o DER). Los ficheros se leen <strong>dentro del navegador</strong>: no se suben por separado.</li>
+        <li><strong>Añades el certificado</strong> que te emitió la CA y, si quieres, la <strong>cadena de intermedios</strong>
+          (PEM, DER, <code>fullchain.pem</code> o PKCS#7 <code>.p7b</code>), y eliges la contraseña del PFX y su compatibilidad.</li>
+        <li><strong>Tu navegador cifra todo</strong> (clave, certificados, contraseña de la clave y contraseña del PFX) con una clave
+          de un solo uso y lo envía en una única petición <code>POST /api/pfx</code>.</li>
+        <li><strong>El servidor lo descifra y lo valida en memoria</strong> con el paquete oficial de Debian <code>python3-cryptography</code>
+          (OpenSSL): abre la clave, comprueba que <strong>corresponde al certificado</strong> y que funciona (prueba de firma), ordena la
+          cadena verificando las firmas, descarta lo que no pertenece a ella y revisa las fechas de validez.</li>
+        <li><strong>El PFX se construye en memoria RAM</strong>, dentro del propio proceso: sin ficheros temporales, sin subprocesos y
+          sin contraseñas en la línea de comandos. Se cifra con AES-256-CBC + PBKDF2-SHA256 (perfil moderno) o 3DES (perfil compatible).</li>
+        <li><strong>El PFX, su nombre y el informe de comprobaciones vuelven cifrados</strong> con <code>Cache-Control: no-store</code>. El
+          servidor descarta la clave, las contraseñas, el PFX y las claves de la sesión.</li>
+        <li><strong>Tu navegador descifra el PFX y te lo descarga.</strong> El PFX y las contraseñas <strong>no se guardan</strong> en el
+          navegador; las contraseñas se borran del formulario. Solo si lo marcas, el certificado y la cadena (información pública) se
+          recuerdan junto a la petición guardada para que la próxima vez no tengas que volver a subirlos.</li>
+      </ol>
     </div>
 
     <div class="card" id="info-cifrado">
@@ -304,7 +474,7 @@
         <li><strong>Capa 1: HTTPS (TLS).</strong> Cifra la conexión completa, incluidas todas las peticiones
           <code>GET</code> y <code>POST</code>, y autentica el servidor con su certificado, para que sepas que hablas con el servidor legítimo.</li>
         <li><strong>Capa 2: cifrado propio de la aplicación con claves efímeras.</strong> Además de TLS, el contenido de cada
-          operación (formulario, contraseña, clave privada, CSR, ZIP y errores) se cifra dentro del propio navegador y solo se
+          operación (formulario, contraseñas, clave privada, CSR, certificados, ZIP, PFX y errores) se cifra dentro del propio navegador y solo se
           descifra dentro del proceso de la aplicación. Cualquier elemento intermedio (proxy inverso, balanceador, CDN,
           cortafuegos con inspección TLS o sus registros) solo ve datos cifrados.</li>
       </ul>
@@ -323,7 +493,7 @@
           sirve para «generar». El navegador envía su clave pública y el mensaje cifrado.</li>
         <li><strong>El servidor retira su clave privada de la memoria</strong> antes incluso de usarla (uso único), calcula el mismo
           secreto compartido y descifra la petición.</li>
-        <li><strong>El servidor hace su trabajo</strong> (generar, comprimir o desglosar) y <strong>cifra la respuesta</strong> con la
+        <li><strong>El servidor hace su trabajo</strong> (generar, comprimir, desglosar o crear el PFX) y <strong>cifra la respuesta</strong> con la
           clave de respuesta. Los errores de validación también viajan cifrados.</li>
         <li><strong>Al terminar, el servidor destruye su clave privada</strong>, el secreto compartido y las claves derivadas. La
           librería criptográfica (OpenSSL) sobrescribe el material de la clave privada al liberarla.</li>
@@ -354,6 +524,7 @@
             <tr><td data-label="Petición"><code>POST /api/generate</code></td><td data-label="Contenido">Formulario, contraseña, clave privada y CSR</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)"><strong>Sí</strong>, petición y respuesta</td></tr>
             <tr><td data-label="Petición"><code>POST /api/zip</code></td><td data-label="Contenido">Clave privada, CSR, ZIP y nombre del fichero</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)"><strong>Sí</strong>, petición y respuesta</td></tr>
             <tr><td data-label="Petición"><code>POST /api/decode</code></td><td data-label="Contenido">CSR y su desglose</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)"><strong>Sí</strong>, petición y respuesta</td></tr>
+            <tr><td data-label="Petición"><code>POST /api/pfx</code></td><td data-label="Contenido">Clave privada, certificados, contraseñas de la clave y del PFX, y el PFX resultante</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)"><strong>Sí</strong>, petición y respuesta</td></tr>
             <tr><td data-label="Petición"><code>GET /api/key</code></td><td data-label="Contenido">Solo la clave pública efímera (es pública por definición)</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)">No aplica: es la propia clave pública</td></tr>
             <tr><td data-label="Petición"><code>GET</code> de la página (HTML, CSS, JS, icono)</td><td data-label="Contenido">El código de la web, igual para todos; ningún dato tuyo</td><td data-label="HTTPS (capa 1)">Sí</td><td data-label="Cifrado efímero (capa 2)">No aplica: es el código que realiza el cifrado</td></tr>
           </tbody>
@@ -375,13 +546,15 @@
           correo electrónico, nombres alternativos (dominios, IP, correos, URI) y opciones técnicas.</li>
         <li><strong>Contraseña de cifrado de la clave</strong>, solo si eliges cifrado AES.</li>
         <li><strong>Clave privada y CSR</strong> generados, y los que envías para comprimir en ZIP o desglosar.</li>
+        <li><strong>Para crear un PFX:</strong> la clave privada (guardada o la tuya), su contraseña si está cifrada, el certificado,
+          la cadena de intermedios y la contraseña del PFX.</li>
         <li>No se piden ni se tratan nombres de usuario, cuentas, cookies, identificadores de dispositivo ni datos de navegación.</li>
       </ul>
 
       <h3>3.2 Finalidad</h3>
       <p>
         Los datos se tratan <strong>exclusivamente</strong> para ejecutar la operación que solicitas (generar el CSR y la clave,
-        comprimirlos en ZIP o desglosar un CSR) y devolverte el resultado. No se usan para ningún otro fin: ni estadísticas,
+        comprimirlos en ZIP, desglosar un CSR o crear un PFX) y devolverte el resultado. No se usan para ningún otro fin: ni estadísticas,
         ni publicidad, ni perfiles, ni entrenamiento, ni comunicaciones.
       </p>
 
@@ -429,6 +602,7 @@
             <tr><td data-label="Operación">Generar</td><td data-label="Qué envía tu navegador">Opciones del formulario y contraseña AES (si la eliges), <strong>cifrado</strong></td><td data-label="Qué hace el servidor">Descifra, ejecuta OpenSSL por pipes en memoria y devuelve clave + CSR <strong>cifrados</strong></td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
             <tr><td data-label="Operación">Descargar KEY / CSR</td><td data-label="Qué envía tu navegador">Nada (no hay petición)</td><td data-label="Qué hace el servidor">No interviene</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
             <tr><td data-label="Operación">Descargar .zip</td><td data-label="Qué envía tu navegador">Clave y CSR, <strong>cifrados</strong></td><td data-label="Qué hace el servidor">Descifra, comprime en RAM y devuelve el ZIP <strong>cifrado</strong></td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
+            <tr><td data-label="Operación">Crear PFX</td><td data-label="Qué envía tu navegador">Clave, certificados y contraseñas, <strong>cifrados</strong></td><td data-label="Qué hace el servidor">Descifra, valida la pareja clave/certificado, construye el PFX en RAM y lo devuelve <strong>cifrado</strong></td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
             <tr><td data-label="Operación">Desglosar CSR</td><td data-label="Qué envía tu navegador">El CSR, <strong>cifrado</strong></td><td data-label="Qué hace el servidor">Descifra, analiza en memoria, verifica la firma y devuelve el desglose <strong>cifrado</strong></td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
             <tr><td data-label="Operación">Clave de sesión</td><td data-label="Qué envía tu navegador">Solicitud sin datos</td><td data-label="Qué hace el servidor">Genera un par de claves efímero y entrega la pública</td><td data-label="Qué queda en el servidor">La clave privada, <strong>solo en RAM</strong>, hasta usarla (máx. 60 s)</td></tr>
             <tr><td data-label="Operación">Guardados / tema</td><td data-label="Qué envía tu navegador">Nada (todo es local)</td><td data-label="Qué hace el servidor">No interviene</td><td data-label="Qué queda en el servidor"><strong>Nada</strong></td></tr>
@@ -446,7 +620,8 @@
           Las peticiones sin cifrar se rechazan.</li>
         <li><strong>Sin ficheros temporales.</strong> La clave, la contraseña y los datos llegan a OpenSSL por la entrada
           estándar y por pipes anónimos en memoria. La batería de tests automáticos comprueba en cada versión que el
-          directorio temporal queda vacío tras generar claves y ZIP.</li>
+          directorio temporal queda vacío tras generar claves, ZIP y PFX. El PFX se construye dentro del proceso, sin
+          ejecutar programas externos.</li>
         <li><strong>Disco de solo lectura para el servicio.</strong> El servicio se ejecuta bajo systemd con
           <code>ProtectSystem=strict</code>: todo el sistema de ficheros es de solo lectura para él y no tiene ningún directorio
           con permiso de escritura. Aunque quisiera, no podría guardar ficheros. Además usa un <code>/tmp</code> privado
@@ -508,6 +683,9 @@
           («Eliminar» o «Borrar todo»).</li>
         <li>Si borras los datos de navegación, usas el modo incógnito o cambias de navegador o equipo, los guardados
           <strong>se pierden de forma irrecuperable</strong>: nadie, ni siquiera el administrador del servidor, puede recuperarlos.</li>
+        <li>Si al crear un PFX marcas «Recordar el certificado», el certificado y la cadena (que son públicos) se añaden a la
+          petición guardada. El fichero PFX y sus contraseñas <strong>nunca</strong> se guardan: solo existen mientras se descargan.</li>
+        <li>Una clave propia que subas para crear un PFX <strong>no se guarda</strong> en el navegador.</li>
         <li>Solo se guarda además tu preferencia de tema (día/noche) y de formato de descarga.</li>
         <li>Las claves de cifrado de las comunicaciones no se guardan: existen solo durante cada petición.</li>
       </ul>
@@ -523,6 +701,9 @@
         <li>No utilices esta web desde equipos públicos o que no sean de tu confianza.</li>
         <li>Usa el apartado <strong>Decodificar</strong> para revisar el CSR antes de enviarlo a tu autoridad de certificación.</li>
         <li>Nunca compartas tu clave privada: a la autoridad de certificación solo se le entrega el CSR.</li>
+        <li>Protege cada PFX con una contraseña robusta y única (el botón «Generar contraseña segura» crea una en tu navegador)
+          y envíala por un canal distinto al del fichero.</li>
+        <li>Usa el perfil <strong>compatible</strong> (3DES) solo si el sistema de destino no acepta el moderno.</li>
       </ul>
     </div>
 
