@@ -1,7 +1,8 @@
 /* Enca's SGEN — lógica del navegador. Sin dependencias externas.
  *
- * Las claves y CSR generados se guardan ÚNICAMENTE en el localStorage de
- * este navegador. El servidor no conserva nada.
+ * Las claves y CSR generados (y, si el usuario lo pide, el certificado y la
+ * cadena) se guardan ÚNICAMENTE en el localStorage de este navegador. Los PFX
+ * y sus contraseñas no se guardan en ningún sitio. El servidor no conserva nada.
  */
 (function () {
   "use strict";
@@ -261,16 +262,25 @@
     ]);
   }
 
+  function downloadCert(entry, fmt) {
+    var content = (entry.cert || "").trim() + "\n" + (entry.chain ? entry.chain.trim() + "\n" : "");
+    var filename = fmt === "txt" ? entry.name + "-crt.txt" : entry.name + ".crt";
+    saveBlob(new Blob([content], { type: (fmt === "txt" ? "text/plain" : "application/x-pem-file") + ";charset=utf-8" }), filename);
+  }
+
   function downloadButtons(entry) {
     var zipBtn = el("button", { type: "button", className: "btn small primary", text: "Descargar ambos (.zip)" });
     zipBtn.addEventListener("click", function () { downloadZip(entry, currentFormat(), zipBtn); });
-    return [
+    var extra = entry.cert ? [el("button", { type: "button", className: "btn small", text: "Descargar CRT",
+      title: "Certificado y cadena guardados (PEM)",
+      onclick: function () { downloadCert(entry, currentFormat()); } })] : [];
+    return extra.concat([
       el("button", { type: "button", className: "btn small", text: "Descargar KEY",
         onclick: function () { downloadOne(entry, "key", currentFormat()); } }),
       el("button", { type: "button", className: "btn small", text: "Descargar CSR",
         onclick: function () { downloadOne(entry, "csr", currentFormat()); } }),
       zipBtn
-    ];
+    ]);
   }
 
   /* ------------------------------------------------------------------ */
@@ -280,6 +290,7 @@
     $all(".tab").forEach(function (t) { t.setAttribute("aria-selected", String(t.dataset.tab === name)); });
     $all(".panel").forEach(function (p) { p.hidden = p.id !== "tab-" + name; });
     if (name === "saved") renderSaved();
+    if (name === "pfx") refreshPfxEntries();
     if (history.replaceState) history.replaceState(null, "", "#" + name);
   }
 
@@ -575,10 +586,419 @@
   }
 
   /* ------------------------------------------------------------------ */
+  /* Crear PFX                                                          */
+  /*   Los ficheros se leen en el navegador. Clave, certificados y       */
+  /*   contraseñas viajan cifrados (sgen1) a /api/pfx y el PFX vuelve    */
+  /*   cifrado. Ni el PFX ni las contraseñas se guardan.                 */
+  /* ------------------------------------------------------------------ */
+  var MAX_UPLOAD = 96 * 1024;
+  var lastPfx = null; // { bytes, filename } solo en memoria, para «Descargar de nuevo»
+
+  function pemWrap(label, bytes) {
+    var b64 = b64encode(bytes);
+    return "-----BEGIN " + label + "-----\n" + b64.replace(/(.{64})/g, "$1\n").replace(/\n$/, "") +
+      "\n-----END " + label + "-----\n";
+  }
+
+  // Lector DER mínimo: devuelve { tag, start (contenido), end } o null.
+  function derItem(b, pos) {
+    if (pos + 2 > b.length) return null;
+    var tag = b[pos], len = b[pos + 1], hdr = 2;
+    if (len & 0x80) {
+      var n = len & 0x7f;
+      if (n < 1 || n > 4 || pos + 2 + n > b.length) return null;
+      len = 0;
+      for (var i = 0; i < n; i++) len = len * 256 + b[pos + 2 + i];
+      hdr += n;
+    }
+    return { tag: tag, start: pos + hdr, end: pos + hdr + len };
+  }
+
+  function containsBytes(b, needle, limit) {
+    outer: for (var i = 0; i < Math.min(b.length, limit) - needle.length; i++) {
+      for (var j = 0; j < needle.length; j++) if (b[i + j] !== needle[j]) continue outer;
+      return true;
+    }
+    return false;
+  }
+
+  // Identifica un fichero DER por su estructura: "PFX", "PKCS7", "CERTIFICATE", "PRIVATE KEY",
+  // "ENCRYPTED PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY" o null.
+  var OID_SIGNED_DATA = [0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02];
+  function sniffDer(b) {
+    var outer = derItem(b, 0);
+    if (!outer || outer.tag !== 0x30) return null;
+    var first = derItem(b, outer.start);
+    if (!first) return null;
+    if (first.tag === 0x02) { // versión: PKCS#12 (3), PKCS#8 o clave tradicional (0/1)
+      var version = b[first.start];
+      var second = derItem(b, first.end);
+      if (!second) return null;
+      if (version === 3 && second.tag === 0x30) return "PFX";
+      if (second.tag === 0x30) return "PRIVATE KEY";
+      if (second.tag === 0x02) return "RSA PRIVATE KEY";
+      if (second.tag === 0x04) return "EC PRIVATE KEY";
+      return null;
+    }
+    if (first.tag === 0x06) return containsBytes(b, OID_SIGNED_DATA, 24) ? "PKCS7" : null;
+    if (first.tag === 0x30) { // AlgorithmIdentifier (PKCS#8 cifrada) o TBSCertificate
+      var inner = derItem(b, first.start);
+      return inner && inner.tag === 0x06 ? "ENCRYPTED PRIVATE KEY" : "CERTIFICATE";
+    }
+    return null;
+  }
+
+  // Lee un fichero en el navegador y lo devuelve como texto PEM (sin subirlo a ningún sitio).
+  function readCryptoFile(file, kind) {
+    return new Promise(function (resolve, reject) {
+      if (file.size > MAX_UPLOAD) { reject(new Error("«" + file.name + "» es demasiado grande.")); return; }
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error("No se pudo leer «" + file.name + "».")); };
+      reader.onload = function () {
+        var bytes = new Uint8Array(reader.result);
+        var text = new TextDecoder("utf-8").decode(bytes);
+        if (/-----BEGIN [A-Z0-9 ]+-----/.test(text)) { resolve(text.trim() + "\n"); return; }
+        if (/^[A-Za-z0-9+\/=\s]+$/.test(text) && text.trim().length > 40) {
+          // Base64 sin cabeceras: se intenta identificar.
+          try { bytes = b64decode(text.replace(/\s+/g, "")); } catch (e) { /* se queda como binario */ }
+        }
+        var label = sniffDer(bytes);
+        if (label === "PFX") {
+          reject(new Error("«" + file.name + "» ya es un PFX/PKCS#12. Aquí van la clave y el certificado por separado."));
+          return;
+        }
+        if (!label) { reject(new Error("«" + file.name + "» no parece " + (kind === "key" ? "una clave privada" : "un certificado") + " en PEM o DER.")); return; }
+        if (kind === "key" && label.indexOf("PRIVATE KEY") === -1) { reject(new Error("«" + file.name + "» no es una clave privada.")); return; }
+        if (kind !== "key" && label.indexOf("PRIVATE KEY") > -1) { reject(new Error("«" + file.name + "» es una clave privada: súbela en el paso 1.")); return; }
+        resolve(pemWrap(label, bytes));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function pfxEntries() {
+    return loadEntries().filter(function (e) { return e && e.key && e.csr; });
+  }
+
+  function selectedPfxEntry() {
+    var id = $("#pfx-entry").value;
+    var list = pfxEntries();
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+
+  function keySource() {
+    var r = $('#pfx-form input[name="keySource"]:checked');
+    return r ? r.value : "saved";
+  }
+
+  function setKeySource(value) {
+    $all('#pfx-form input[name="keySource"]').forEach(function (r) { r.checked = r.value === value; });
+    updatePfxForm();
+  }
+
+  function keyIsEncrypted() {
+    if (keySource() === "saved") {
+      var entry = selectedPfxEntry();
+      return !!(entry && entry.cipher && entry.cipher !== "none");
+    }
+    var text = $("#pfx-key").value;
+    return /ENCRYPTED/.test(text);
+  }
+
+  function fillCertFromEntry(entry) {
+    var cert = $("#pfx-cert"), chain = $("#pfx-chain");
+    // Solo se sustituye lo que se rellenó automáticamente o lo que está vacío.
+    if (!cert.value.trim() || cert.dataset.auto === "1") {
+      cert.value = (entry && entry.cert) || "";
+      cert.dataset.auto = entry && entry.cert ? "1" : "";
+    }
+    if (!chain.value.trim() || chain.dataset.auto === "1") {
+      chain.value = (entry && entry.chain) || "";
+      chain.dataset.auto = entry && entry.chain ? "1" : "";
+    }
+  }
+
+  function updatePfxForm() {
+    var src = keySource();
+    var list = pfxEntries();
+    $("#pfx-saved-box").hidden = src !== "saved";
+    $("#pfx-own-box").hidden = src !== "own";
+    $("#pfx-no-saved").hidden = list.length > 0;
+    $("#pfx-entry").parentNode.hidden = list.length === 0;
+    $("#pfx-remember-row").hidden = src !== "saved" || list.length === 0;
+    var entry = src === "saved" ? selectedPfxEntry() : null;
+    var info = $("#pfx-entry-info");
+    info.textContent = entry
+      ? (KEY_LABELS[entry.keyType] || entry.keyType) + " · " + (CIPHER_LABELS[entry.cipher] || entry.cipher) +
+        " · creada el " + new Date(entry.created).toLocaleString() +
+        (entry.cert ? " · certificado guardado" : " · aún sin certificado: pega el que te envió la CA")
+      : "";
+    if (src === "saved") fillCertFromEntry(entry);
+    else {
+      // Lo rellenado desde una petición guardada no debe mezclarse con una clave propia.
+      [$("#pfx-cert"), $("#pfx-chain")].forEach(function (area) {
+        if (area.dataset.auto === "1") { area.value = ""; area.dataset.auto = ""; }
+      });
+    }
+    var encrypted = keyIsEncrypted();
+    var ownUnknown = src === "own" && $("#pfx-key").value.trim() && !/-----BEGIN/.test($("#pfx-key").value);
+    $("#pfx-keypass-row").hidden = !(encrypted || ownUnknown);
+    $("#pfx-keypass-hint").textContent = encrypted
+      ? "Esta clave está cifrada: indica la contraseña con la que la protegiste. Solo se usa para abrirla."
+      : "Si la clave está cifrada, indica su contraseña. Si no lo está, deja el campo vacío.";
+    var friendly = $("#pfx-friendly");
+    friendly.placeholder = entry ? entry.cn : "Por defecto, el CN del certificado";
+  }
+
+  function refreshPfxEntries(selectId) {
+    var sel = $("#pfx-entry");
+    var current = selectId || sel.value;
+    var list = pfxEntries();
+    sel.textContent = "";
+    list.forEach(function (e) {
+      var label = e.cn + " · " + (KEY_LABELS[e.keyType] || e.keyType) + " · " + new Date(e.created).toLocaleDateString() +
+        (e.cert ? " · con certificado" : "");
+      sel.appendChild(el("option", { value: e.id, text: label }));
+    });
+    if (current && list.some(function (e) { return e.id === current; })) sel.value = current;
+    if (!list.length && keySource() === "saved" && !selectId) {
+      $all('#pfx-form input[name="keySource"]').forEach(function (r) { r.checked = r.value === "own"; });
+    }
+    updatePfxForm();
+  }
+
+  function openPfxFor(id) {
+    setKeySource("saved");
+    var cert = $("#pfx-cert"), chain = $("#pfx-chain");
+    if (cert.dataset.auto === "1") cert.value = "";
+    if (chain.dataset.auto === "1") chain.value = "";
+    showTab("pfx");
+    refreshPfxEntries(id);
+    window.scrollTo(0, 0);
+    var entry = selectedPfxEntry();
+    (entry && entry.cert ? $("#pfx-pass") : $("#pfx-cert")).focus();
+  }
+
+  function randomPassword(length) {
+    var chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_.!@#%+=";
+    var out = "";
+    var buf = new Uint32Array(length * 2);
+    window.crypto.getRandomValues(buf);
+    var limit = Math.floor(4294967296 / chars.length) * chars.length; // sin sesgo
+    for (var i = 0; i < buf.length && out.length < length; i++) {
+      if (buf[i] < limit) out += chars.charAt(buf[i] % chars.length);
+    }
+    return out.length === length ? out : randomPassword(length);
+  }
+
+  function clearPfxSecrets() {
+    $("#pfx-pass").value = "";
+    $("#pfx-pass2").value = "";
+    $("#pfx-keypass").value = "";
+  }
+
+  function onCreatePfx(ev) {
+    ev.preventDefault();
+    var msg = $("#pfx-msg");
+    var form = $("#pfx-form");
+    $all(".invalid", form).forEach(function (i) { i.classList.remove("invalid"); });
+    function fail(node, text) {
+      if (node) { node.classList.add("invalid"); node.focus(); }
+      setMsg(msg, text, "error");
+    }
+
+    var src = keySource();
+    var entry = src === "saved" ? selectedPfxEntry() : null;
+    var key = src === "saved" ? (entry && entry.key) : $("#pfx-key").value.trim();
+    if (src === "saved" && !entry) return fail(null, "Elige una petición guardada o sube tu propia clave.");
+    if (!key) return fail($("#pfx-key"), "Pega o sube la clave privada.");
+    if (src === "own" && /CERTIFICATE/.test(key) && !/PRIVATE KEY/.test(key)) {
+      return fail($("#pfx-key"), "En el campo de la clave has puesto un certificado.");
+    }
+    var certNode = $("#pfx-cert");
+    var cert = certNode.value.trim();
+    if (!cert) return fail(certNode, "Pega o sube el certificado que te emitió la CA.");
+    if (/CERTIFICATE REQUEST/.test(cert)) return fail(certNode, "Has puesto el CSR: aquí va el certificado que te devolvió la CA a partir de él.");
+    if (/PRIVATE KEY/.test(cert) || /PRIVATE KEY/.test($("#pfx-chain").value)) {
+      return fail(certNode, "Hay una clave privada en el certificado o la cadena: ponla solo en el paso 1.");
+    }
+    if (keyIsEncrypted() && !$("#pfx-keypass").value) {
+      return fail($("#pfx-keypass"), "La clave está cifrada: indica su contraseña.");
+    }
+    var pass = $("#pfx-pass"), pass2 = $("#pfx-pass2");
+    if (pass.value.length < 4) return fail(pass, "La contraseña del PFX debe tener al menos 4 caracteres.");
+    if (pass.value !== pass2.value) return fail(pass2, "Las contraseñas del PFX no coinciden.");
+
+    var ext = $('#pfx-form input[name="pfxExt"]:checked').value;
+    var payload = {
+      key: key,
+      keyPassword: $("#pfx-keypass").value,
+      cert: cert,
+      chain: $("#pfx-chain").value.trim() ? [$("#pfx-chain").value] : [],
+      includeChain: $("#pfx-include-chain").checked,
+      password: pass.value,
+      profile: $("#pfx-profile").value,
+      friendlyName: $("#pfx-friendly").value.trim(),
+      extension: ext,
+      name: entry ? entry.name : ""
+    };
+    var btn = $("#pfx-btn");
+    btn.disabled = true;
+    setMsg(msg, "Creando el PFX…", "busy");
+    api("/api/pfx", payload).then(function (res) {
+      payload = null;
+      clearPfxSecrets();
+      var bytes = b64decode(res.pfx);
+      res.pfx = null;
+      lastPfx = { bytes: bytes, filename: res.filename };
+      savePfxBlob();
+      var remembered = false;
+      if (entry && $("#pfx-remember").checked) remembered = rememberCertificate(entry.id, res);
+      renderPfxResult(res, remembered);
+      setMsg(msg, "");
+    }).catch(function (err) {
+      setMsg(msg, err.message, "error");
+    }).then(function () { btn.disabled = false; });
+  }
+
+  function savePfxBlob() {
+    if (!lastPfx) return;
+    saveBlob(new Blob([lastPfx.bytes], { type: "application/x-pkcs12" }), lastPfx.filename);
+  }
+
+  function rememberCertificate(id, res) {
+    var list = loadEntries();
+    var changed = false;
+    list.forEach(function (e) {
+      if (e.id === id) {
+        e.cert = res.leafPem;
+        e.chain = res.chainPem || "";
+        e.certNotAfter = res.leaf.notAfter;
+        changed = true;
+      }
+    });
+    var ok = changed && saveEntries(list);
+    if (ok) {
+      updateSavedCount();
+      var cert = $("#pfx-cert"), chain = $("#pfx-chain");
+      cert.dataset.auto = "1";
+      chain.dataset.auto = res.chainPem ? "1" : "";
+    }
+    return ok;
+  }
+
+  function renderPfxResult(res, remembered) {
+    var out = $("#pfx-result");
+    out.textContent = "";
+    var errors = res.checks.filter(function (c) { return c.level === "error"; }).length;
+    var warns = res.checks.filter(function (c) { return c.level === "warn"; }).length;
+    var status = errors ? ["error", "Creado con errores"] : warns ? ["warn", "Creado con advertencias"] : ["ok", "Creado correctamente"];
+    var again = el("button", { type: "button", className: "btn small primary", text: "Descargar " + res.filename, onclick: savePfxBlob });
+    var forget = el("button", { type: "button", className: "btn small ghost", text: "Olvidar el PFX de la memoria",
+      onclick: function () { lastPfx = null; out.hidden = true; out.textContent = ""; toast("PFX eliminado de la memoria de esta página"); } });
+
+    var leaf = res.leaf;
+    var validity = new Date(leaf.notBefore).toLocaleDateString() + " → " + new Date(leaf.notAfter).toLocaleDateString() +
+      (leaf.expired ? " (caducado)" : leaf.notYetValid ? " (aún no válido)" : " (" + leaf.daysLeft + " días restantes)");
+    var rows = [
+      ["Fichero", res.filename + " (" + res.size + " bytes)"],
+      ["Nombre descriptivo", res.friendlyName],
+      ["Cifrado del PFX", res.profileLabel],
+      ["Sujeto", leaf.subject],
+      ["Emisor", leaf.issuer],
+      ["Validez", validity],
+      ["Clave", leaf.key],
+      ["Número de serie", el("span", { className: "mono", text: leaf.serial })],
+      ["Huella SHA-256", el("span", { className: "mono", text: leaf.sha256 })]
+    ];
+    if (leaf.sans.length) {
+      rows.push(["SAN", el("div", { className: "tag-list" }, leaf.sans.map(function (v) { return el("span", { className: "tag", text: v }); }))]);
+    }
+    rows.push(["Cadena incluida", res.chain.length
+      ? el("ol", { className: "chain" }, res.chain.map(function (c) {
+        return el("li", null, [el("b", { text: c.cn }), " · emitido por " + c.issuerCn + " · hasta " +
+          new Date(c.notAfter).toLocaleDateString() + (c.selfSigned ? " · raíz" : "")]);
+      }))
+      : "Ninguna"]);
+
+    out.appendChild(el("div", { className: "card result" }, [
+      el("div", { className: "result-head" }, [
+        el("h2", { text: "PFX: " + res.filename }),
+        el("span", { className: "pill " + status[0], text: status[1] })
+      ]),
+      el("div", { className: "download-bar" }, [again, forget,
+        el("span", { className: "hint", text: "El PFX no se guarda: si cierras la página tendrás que crearlo de nuevo." })]),
+      el("ul", { className: "checks" }, res.checks.map(function (c) { return el("li", { className: c.level, text: c.message }); })),
+      remembered ? el("p", { className: "hint match", text: "El certificado y la cadena se han guardado junto a la petición en este navegador." }) : null,
+      el("h3", { className: "sub", text: "Contenido del PFX" }),
+      kvTable(rows)
+    ]));
+    out.hidden = false;
+    out.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function attachFileInput(input, target, kind, append) {
+    input.addEventListener("change", function () {
+      var files = Array.prototype.slice.call(input.files || []);
+      input.value = "";
+      if (!files.length) return;
+      Promise.all(files.map(function (f) { return readCryptoFile(f, kind); })).then(function (texts) {
+        var area = $(target);
+        var joined = texts.join("");
+        area.value = append && area.value.trim() ? area.value.trim() + "\n" + joined : joined;
+        area.dataset.auto = "";
+        setMsg($("#pfx-msg"), "");
+        updatePfxForm();
+      }).catch(function (err) { setMsg($("#pfx-msg"), err.message, "error"); });
+    });
+  }
+
+  function initPfx() {
+    var form = $("#pfx-form");
+    form.addEventListener("submit", onCreatePfx);
+    $all('#pfx-form input[name="keySource"]').forEach(function (r) { r.addEventListener("change", updatePfxForm); });
+    $("#pfx-entry").addEventListener("change", updatePfxForm);
+    $("#pfx-key").addEventListener("input", updatePfxForm);
+    ["#pfx-cert", "#pfx-chain"].forEach(function (sel) {
+      $(sel).addEventListener("input", function () { $(sel).dataset.auto = ""; });
+    });
+    attachFileInput($("#pfx-key-file"), "#pfx-key", "key", false);
+    attachFileInput($("#pfx-cert-file"), "#pfx-cert", "cert", false);
+    attachFileInput($("#pfx-chain-file"), "#pfx-chain", "cert", true);
+    $("#pfx-showpass").addEventListener("change", function (e) {
+      ["#pfx-pass", "#pfx-pass2", "#pfx-keypass"].forEach(function (sel) { $(sel).type = e.target.checked ? "text" : "password"; });
+    });
+    $("#pfx-genpass").addEventListener("click", function () {
+      var pw = randomPassword(20);
+      $("#pfx-pass").value = pw;
+      $("#pfx-pass2").value = pw;
+      $("#pfx-showpass").checked = true;
+      ["#pfx-pass", "#pfx-pass2", "#pfx-keypass"].forEach(function (sel) { $(sel).type = "text"; });
+      toast("Contraseña generada en tu navegador: cópiala y guárdala antes de crear el PFX");
+    });
+    $("#pfx-copypass").addEventListener("click", function () {
+      if (!$("#pfx-pass").value) { toast("No hay contraseña que copiar"); return; }
+      copyText($("#pfx-pass").value);
+    });
+    $("#pfx-reset").addEventListener("click", function () {
+      clearPfxSecrets();
+      ["#pfx-key", "#pfx-cert", "#pfx-chain", "#pfx-friendly"].forEach(function (sel) { $(sel).value = ""; $(sel).dataset.auto = ""; });
+      $("#pfx-result").hidden = true;
+      $("#pfx-result").textContent = "";
+      lastPfx = null;
+      setMsg($("#pfx-msg"), "");
+      updatePfxForm();
+    });
+    refreshPfxEntries();
+  }
+
+  /* ------------------------------------------------------------------ */
   /* Guardados                                                          */
   /* ------------------------------------------------------------------ */
   function updateSavedCount() {
     $("#saved-count").textContent = String(loadEntries().length);
+    if ($("#pfx-entry")) refreshPfxEntries();
   }
 
   function renderSaved() {
@@ -594,7 +1014,8 @@
       var meta = [KEY_LABELS[entry.keyType] || entry.keyType, DIGEST_LABELS[entry.digest] || entry.digest,
         CIPHER_LABELS[entry.cipher] || entry.cipher, new Date(entry.created).toLocaleString()].join(" · ");
       item.appendChild(el("div", { className: "saved-top" }, [
-        el("span", { className: "saved-name", text: entry.cn }),
+        el("span", { className: "saved-name" }, [entry.cn + " ",
+          entry.cert ? el("span", { className: "pill ok", text: "Con certificado" }) : el("span", { className: "pill neutral", text: "Pendiente de certificado" })]),
         el("span", { className: "saved-meta", text: meta })
       ]));
       var viewer = el("div", { hidden: true });
@@ -612,6 +1033,8 @@
           } }),
         el("button", { type: "button", className: "btn small ghost", text: "Desglosar CSR",
           onclick: function () { $("#dec-input").value = entry.csr; showTab("decode"); onDecode(); } }),
+        el("button", { type: "button", className: "btn small ghost", text: "Crear PFX",
+          onclick: function () { openPfxFor(entry.id); } }),
         el("button", { type: "button", className: "btn small danger", text: "Eliminar",
           onclick: function () {
             if (!confirm("¿Eliminar «" + entry.cn + "» de este navegador? Si no la has descargado, la clave privada se perderá.")) return;
@@ -666,6 +1089,7 @@
     $all("[data-copy]").forEach(function (b) {
       b.addEventListener("click", function () { copyText($("#" + b.dataset.copy).value); });
     });
+    $("#res-pfx").addEventListener("click", function () { if (lastEntry) openPfxFor(lastEntry.id); });
     $("#res-decode").addEventListener("click", function () {
       if (!lastEntry) return;
       $("#dec-input").value = lastEntry.csr;
@@ -699,9 +1123,14 @@
     });
 
     window.addEventListener("storage", function (e) {
-      if (e.key === STORE_KEY) { updateSavedCount(); if (!$("#tab-saved").hidden) renderSaved(); }
+      if (e.key === STORE_KEY) {
+        updateSavedCount();
+        if (!$("#tab-saved").hidden) renderSaved();
+        refreshPfxEntries();
+      }
     });
 
+    initPfx();
     updateSavedCount();
     if (!cryptoAvailable()) $("#e2e-warning").hidden = false;
     $all("[data-goto]").forEach(function (a) {
@@ -712,7 +1141,7 @@
       });
     });
     var hash = (location.hash || "").slice(1);
-    if (hash === "decode" || hash === "saved" || hash === "info") showTab(hash);
+    if (hash === "decode" || hash === "pfx" || hash === "saved" || hash === "info") showTab(hash);
     else if (hash.indexOf("info-") === 0 && document.getElementById(hash)) {
       showTab("info");
       history.replaceState(null, "", "#" + hash);

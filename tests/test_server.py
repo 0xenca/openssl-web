@@ -12,7 +12,7 @@ import threading
 import unittest
 import zipfile
 
-from tests.helpers import APP, base_request, e2e_open, e2e_seal
+from tests.helpers import APP, base_request, e2e_open, e2e_seal, make_ca_chain
 
 import server
 
@@ -123,6 +123,29 @@ class ServerTests(unittest.TestCase):
                 self.assertEqual(sorted(zipfile.ZipFile(io.BytesIO(body)).namelist()), names)
                 self.assertNotIn(b"ejemplo", raw)
 
+    def test_pfx_flow_is_encrypted(self):
+        status, out, _ = self.secure("/api/generate", base_request(cipher="aes128", passphrase="clave-key"))
+        self.assertEqual(status, 200, out)
+        leaf, inter, _root = make_ca_chain(out["csr"])
+        req = {"key": out["key"], "keyPassword": "clave-key", "cert": leaf, "chain": [inter],
+               "password": "pfx-secreta", "profile": "modern", "extension": "pfx"}
+        status, res, raw = self.secure("/api/pfx", req)
+        self.assertEqual(status, 200, res)
+        self.assertEqual(res["filename"], "www.ejemplo.es.pfx")
+        pfx = base64.b64decode(res["pfx"])
+        from cryptography.hazmat.primitives.serialization import pkcs12
+        self.assertEqual(len(pkcs12.load_pkcs12(pfx, b"pfx-secreta").additional_certs), 1)
+        # Ni la clave, ni el certificado, ni las contraseñas, ni el PFX viajan en claro.
+        for secret in (b"PRIVATE KEY", b"CERTIFICATE", b"ejemplo", b"pfx-secreta", b"clave-key",
+                       res["pfx"][40:80].encode()):
+            self.assertNotIn(secret, raw)
+        # Error de validación (clave que no corresponde), también cifrado.
+        other = self.secure("/api/generate", base_request())[1]
+        status, res, raw = self.secure("/api/pfx", dict(req, key=other["key"], keyPassword=""))
+        self.assertEqual(status, 400)
+        self.assertIn("no corresponde", res["error"])
+        self.assertNotIn(b"corresponde", raw)
+
     def test_validation_error_is_encrypted(self):
         status, out, raw = self.secure("/api/generate", base_request(subject={"CN": ""}))
         self.assertEqual(status, 400)
@@ -215,6 +238,7 @@ class ServerTests(unittest.TestCase):
         self.secure("/api/generate", base_request())
         self.request("POST", "/api/generate", base_request())
         self.request("POST", "/api/generate", b"basura", {"Content-Type": "application/json"})
+        self.secure("/api/pfx", {"key": "x", "cert": "y", "password": "abcd"})
         self.assertEqual(self.stderr.getvalue(), "")
 
 
@@ -288,6 +312,22 @@ class StaticAssetsTests(unittest.TestCase):
         for anchor in re.findall(r'href="#(info-[a-z]+)"', html):
             with self.subTest(anchor=anchor):
                 self.assertIn(f'id="{anchor}"', html)
+
+    def test_pfx_section(self):
+        with open(os.path.join(APP, "static", "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+        pfx = html[html.index('id="tab-pfx"'):html.index('id="tab-saved"')]
+        for ident in ("pfx-form", "pfx-key", "pfx-cert", "pfx-chain", "pfx-pass", "pfx-pass2",
+                      "pfx-profile", "pfx-genpass", "pfx-key-file", "pfx-chain-file"):
+            with self.subTest(ident=ident):
+                self.assertIn(f'id="{ident}"', pfx)
+        self.assertIn('data-tab="pfx"', html)
+        self.assertIn("/api/pfx", html[html.index('id="tab-info"'):])
+        with open(os.path.join(APP, "static", "app.js"), encoding="utf-8") as fh:
+            js = fh.read()
+        self.assertIn('api("/api/pfx"', js)
+        # El PFX y las contraseñas no deben acabar en localStorage.
+        self.assertNotRegex(js, r"setItem\([^)]*(pfx|password)", )
 
     def test_no_external_dependencies(self):
         static = os.path.join(APP, "static")

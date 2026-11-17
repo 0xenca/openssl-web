@@ -310,3 +310,52 @@ table.data-table thead th { color: var(--text); font-weight: 600; background: va
   table.data-table td::before { content: attr(data-label); color: var(--muted); font-size: 13px; }
   table.data-table td:first-child { font-weight: 600; }
 }
+
+/* ---------- guía de pasos ---------- */
+.flow-card .result-head { margin-bottom: 8px; }
+.flow {
+  list-style: none; margin: 0; padding: 0; counter-reset: flow;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;
+}
+.flow li {
+  counter-increment: flow; position: relative;
+  padding: 10px 12px 10px 44px; border-radius: 8px; background: var(--surface-2);
+  display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--muted);
+}
+.flow li b { color: var(--text); font-size: 14px; }
+.flow li::before {
+  content: counter(flow); position: absolute; left: 12px; top: 10px;
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--border); color: var(--text); font-weight: 700; font-size: 12px;
+}
+.flow li.current { background: var(--accent-soft); }
+.flow li.current::before { background: var(--accent); color: var(--accent-text); }
+.flow a, .next-step a, #pfx-no-saved a { color: var(--accent); }
+.next-step { margin-top: 12px; }
+
+/* ---------- crear PFX ---------- */
+.step-num {
+  display: inline-grid; place-items: center; width: 22px; height: 22px; margin-right: 6px;
+  border-radius: 50%; background: var(--accent); color: var(--accent-text); font-size: 12px; vertical-align: 1px;
+}
+.optional { color: var(--muted); font-weight: 400; font-size: 13px; }
+.segmented { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.segmented label {
+  flex-direction: row; align-items: center; gap: 8px; cursor: pointer;
+  padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); font-size: 14px; font-weight: 500;
+}
+.segmented label:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+#pfx-own-box, #pfx-saved-box { margin-bottom: 4px; }
+#pfx-keypass-row { margin-top: 14px; }
+#pfx-form textarea.pem { min-height: 150px; }
+.pass-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+details.help { margin-top: 14px; font-size: 14px; }
+details.help summary { cursor: pointer; color: var(--accent); font-weight: 550; }
+details.help ul, .help-list { margin: 8px 0 0; padding-left: 22px; }
+details.help li, .help-list li { margin-bottom: 6px; }
+.help-list code { overflow-wrap: anywhere; }
+ol.chain { margin: 0; padding-left: 20px; }
+ol.chain li { margin-bottom: 4px; }
+h3.sub { margin: 16px 0 6px; }
+.download-bar .hint { margin: 0; }

@@ -6,7 +6,7 @@
 
 [![Web oficial](https://img.shields.io/website?url=https%3A%2F%2Fsslgen.exala.es&label=sslgen.exala.es&up_message=online&down_message=offline&logo=googlechrome&logoColor=white)](https://sslgen.exala.es)
 [![Tests (Debian 13)](https://github.com/0xenca/openssl-web/actions/workflows/tests.yml/badge.svg)](https://github.com/0xenca/openssl-web/actions/workflows/tests.yml)
-![Versión](https://img.shields.io/badge/versión-1.3.1-2463eb)
+![Versión](https://img.shields.io/badge/versión-1.4.0-2463eb)
 ![Debian 13](https://img.shields.io/badge/Debian-13_trixie-A81D33?logo=debian&logoColor=white)
 ![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)
 ![OpenSSL 3.5](https://img.shields.io/badge/OpenSSL-3.5-721412?logo=openssl&logoColor=white)
@@ -19,7 +19,7 @@
 ![Dependencias](https://img.shields.io/badge/dependencias_JS%2FCSS-0-18794e)
 ![systemd](https://img.shields.io/badge/systemd--analyze_security-1.5_OK-18794e)
 
-**Genera tu CSR y tu clave privada con la tranquilidad de que el servidor no se queda con nada.**
+**Genera tu CSR, tu clave privada y tu PFX con la tranquilidad de que el servidor no se queda con nada.**
 <br>
 Ni un fichero. Ni un log. Ni una clave. Ni una cookie.
 
@@ -93,7 +93,7 @@ Ni un fichero. Ni un log. Ni una clave. Ni una cookie.
 La mayoría de los generadores de CSR online te piden que confíes en ellos: en sus logs, en sus ficheros temporales, en su proxy, en su analítica. **Enca's SGEN está diseñado para que no tengas que hacerlo.** Cada decisión de diseño responde a una misma pregunta: *¿y si alguien mira lo que pasa por aquí?*
 
 - 🔐 **Doble cifrado de extremo a extremo.** HTTPS y, además, un cifrado propio de la aplicación con un par de claves **nuevo en cada petición**. El servidor guarda su clave privada **solo en RAM** y **la destruye** al terminar.
-- 🧾 **Cero almacenamiento.** OpenSSL trabaja por *pipes* en memoria, el ZIP se construye en RAM y el servicio corre sobre un sistema de ficheros **de solo lectura**. No es que no queramos guardar nada: es que **no puede**.
+- 🧾 **Cero almacenamiento.** OpenSSL trabaja por *pipes* en memoria, el ZIP y el PFX se construyen en RAM y el servicio corre sobre un sistema de ficheros **de solo lectura**. No es que no queramos guardar nada: es que **no puede**.
 - 🙈 **Cero logs.** Ni IPs, ni dominios, ni contenidos. El registro de peticiones está desactivado por código, y hay tests que lo comprueban.
 - 🧩 **Cero dependencias externas.** HTML, CSS y JS escritos a mano. El cifrado del navegador usa WebCrypto, que viene integrado. En el servidor, solo la biblioteca estándar de Python y paquetes oficiales de Debian.
 - 🛡️ **Servicio blindado.** systemd con `ProtectSystem=strict`, sin volcados de memoria, llamadas al sistema filtradas y usuario sin privilegios: **1.5 «OK»** en `systemd-analyze security`.
@@ -145,6 +145,13 @@ La mayoría de los generadores de CSR online te piden que confíes en ellos: en 
 - Verificación de firma y avisos de buenas prácticas
 - Salida completa de `openssl`
 
+**🗝️ Crear PFX / PKCS#12**
+- Con una clave **guardada** o con **tu propia clave y certificado** (PEM o DER)
+- Certificado, `fullchain.pem`, intermedios sueltos o **PKCS#7 `.p7b`**
+- Comprueba que **la clave corresponde al certificado**, ordena la cadena verificando firmas y avisa de caducidades
+- Perfil **moderno** (AES-256 + PBKDF2-SHA256) o **compatible** (3DES, sistemas antiguos), `.pfx` o `.p12`
+- Generador de contraseñas en el navegador; el PFX y las contraseñas **no se guardan**
+
 </td>
 </tr>
 </table>
@@ -170,7 +177,7 @@ Las capas de protección, de fuera hacia dentro:
 | **1. Proxy inverso con HTTPS** | Único punto de entrada: cifra todo el tráfico (GET y POST), autentica el servidor y concentra el control de acceso. |
 | **2. Cifrado efímero `sgen1`** | ECDH P-256 + HKDF-SHA256 + AES-256-GCM con un par de claves por petición, de un solo uso y que caduca a los 60 s. Las peticiones en claro se rechazan. |
 | **3. Validación** | Listas blancas para algoritmos, DNS, IP, email, URI, longitudes y caracteres de control. Sin inyección en la configuración de OpenSSL. |
-| **4. Procesado en memoria** | La clave, la contraseña y los datos llegan a OpenSSL por stdin y descriptores de fichero anónimos. El ZIP se hace en `BytesIO`. |
+| **4. Procesado en memoria** | La clave, la contraseña y los datos llegan a OpenSSL por stdin y descriptores de fichero anónimos. El ZIP se hace en `BytesIO` y el PFX dentro del propio proceso (`python3-cryptography`), sin ficheros ni subprocesos. |
 | **5. Sin rastro** | Sin logs, sin `core dumps`, `Cache-Control: no-store`, sin cookies y CSP `default-src 'none'`. |
 | **6. Sandbox** | `ProtectSystem=strict`, `PrivateTmp`, `NoNewPrivileges`, `SystemCallFilter`, `ProtectProc=invisible`, usuario dedicado… |
 | **7. Ciclo de vida** | Dependabot, actualizaciones de seguridad de Debian, tests antes de cada despliegue y *rollback* automático. |
@@ -181,6 +188,8 @@ Las capas de protección, de fuera hacia dentro:
 |---|---|---|
 | CSR y clave privada | ✅ `localStorage`, bajo tu control | ❌ **Nunca** |
 | Contraseña AES | ❌ Se borra del formulario tras usarla | ❌ **Nunca** |
+| Certificado y cadena | ✅ Solo si marcas «Recordar», junto a la petición | ❌ **Nunca** |
+| PFX y sus contraseñas | ❌ Solo en memoria hasta descargarlo | ❌ **Nunca** |
 | Claves de cifrado de la sesión | ❌ No exportables, se descartan | ⏱️ Solo en RAM, hasta usarlas (máx. 60 s) |
 | Logs / IPs / cookies | ❌ | ❌ **Nunca** |
 
@@ -460,10 +469,11 @@ Desde la 1.3.0, las instalaciones que conservaban el antiguo `OPENSSLWEB_HOST=12
 python3 -B -m unittest discover -s tests -t .
 ```
 
-**57 tests** en Debian 13, en el CI y en tu servidor antes de cada despliegue. Comprueban, entre otras cosas:
+**72 tests** en Debian 13, en el CI y en tu servidor antes de cada despliegue. Comprueban, entre otras cosas:
 
 - 🔑 Todas las combinaciones de clave y SHA, y el cifrado AES (la clave se descifra con la contraseña correcta y con ninguna otra).
 - 🔐 El protocolo de cifrado: ida y vuelta, uso único, caducidad, liberación de la clave privada, manipulación, reenvío, operación equivocada, rechazo de peticiones en claro y **que no viaja ni un byte en claro**.
+- 🗝️ El PFX: perfiles moderno y compatible verificados con `openssl pkcs12`, clave cifrada y tradicional, DER, PKCS#7, orden de la cadena, clave que no corresponde, certificados caducados y que los errores no repiten lo enviado.
 - 💾 Que **no se escribe ningún fichero temporal**.
 - 🙈 Que el servidor **no registra nada**.
 - 🧱 Cabeceras de seguridad, *path traversal*, CSRF, límites de tamaño e intentos de inyección.
@@ -494,6 +504,7 @@ Para claves de máxima criticidad (CA, firma de código, banca…), lo recomenda
 app/server.py              Servidor HTTP (biblioteca estándar)
 app/e2e.py                 Cifrado de las comunicaciones con claves efímeras (sgen1)
 app/csrtool.py             Generación, validación, ZIP y desglose de CSR
+app/pfxtool.py             Creación de PFX / PKCS#12 en memoria
 app/openssl-req.cnf        Configuración estática mínima para openssl req
 app/static/                Interfaz (HTML + CSS + JS propios)
 deploy/opensslweb.service  Unidad systemd endurecida

@@ -5,7 +5,7 @@ Usa la biblioteca estándar de Python y el paquete de Debian
 ``python3-cryptography`` (cifrado de las comunicaciones, ver ``e2e.py``).
 No registra peticiones ni datos:
   * ``log_message`` y ``log_error`` están anulados.
-  * Las claves/CSR solo existen en memoria durante la petición.
+  * Las claves/CSR/PFX solo existen en memoria durante la petición.
   * Toda petición/respuesta de la API con datos va cifrada con una clave
     efímera de un solo uso (ECDH P-256 + AES-256-GCM).
   * Las respuestas de la API llevan ``Cache-Control: no-store``.
@@ -38,13 +38,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import csrtool  # noqa: E402
 import e2e  # noqa: E402
+import pfxtool  # noqa: E402
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(APP_DIR, "static")
 VERSION_FILE = os.path.join(os.path.dirname(APP_DIR), "VERSION")
 
 DEFAULT_HOST = "::"  # todas las interfaces de red (IPv4 e IPv6)
-MAX_BODY = 128 * 1024
+MAX_BODY = 384 * 1024  # clave + certificado + cadena para el PFX, cifrados
 REQUEST_TIMEOUT = 60
 
 STATIC_FILES = {
@@ -195,6 +196,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/generate": self._api_generate,
             "/api/decode": self._api_decode,
             "/api/zip": self._api_zip,
+            "/api/pfx": self._api_pfx,
         }
         handler = routes.get(path)
         if handler is None:
@@ -248,6 +250,16 @@ class Handler(BaseHTTPRequestHandler):
         filename, body = csrtool.build_zip(data)
         # El nombre del fichero va dentro de la respuesta cifrada, no en cabeceras.
         return {"filename": filename, "zip": base64.b64encode(body).decode("ascii")}
+
+
+    def _api_pfx(self, data):
+        if not self.server.jobs.acquire(timeout=30):
+            raise csrtool.CsrError("Servidor ocupado, inténtalo de nuevo en unos segundos")
+        try:
+            # El PFX se construye en memoria y viaja cifrado dentro de la respuesta.
+            return pfxtool.build_pfx(data)
+        finally:
+            self.server.jobs.release()
 
 
 class Server(ThreadingHTTPServer):
